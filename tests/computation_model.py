@@ -35,7 +35,7 @@ print(time.time() - start)
 
 # Method 1 bis
 start = time.time()
-data, nb_chunks = wph_op.preconfigure(data)
+data, nb_chunks = wph_op.preconfigure(data, mem_chunk_factor=20)
 coeffs = []
 for i in range(nb_chunks):
     coeffs.append(wph_op.apply(data, i).detach())
@@ -43,7 +43,7 @@ coeffs = torch.cat(coeffs, -1)
 b = coeffs
 ell_time = time.time() - start
 print(ell_time)
-    
+
 # # Method 2 with grad but no backward
 # start = time.time()
 # data, nb_chunks = wph_op.preconfigure(data, requires_grad=True)

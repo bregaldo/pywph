@@ -1,7 +1,7 @@
 import os
 
-from stats.bump_steerable_wavelet.bump_steerable_wavelet import compute_bank_of_wavelet, create_bank_scaling_functions
-from stats.wph_syntheses.sufficient_stat import compute_idx_of_sufficient_stat, compute_idx_of_sufficient_stat_PS
+from ..bump_steerable_wavelet.bump_steerable_wavelet import compute_bank_of_wavelet, create_bank_scaling_functions
+from ..wph_syntheses.sufficient_stat import compute_idx_of_sufficient_stat, compute_idx_of_sufficient_stat_PS
 
 __all__ = ['PhaseHarmonics2d']
 

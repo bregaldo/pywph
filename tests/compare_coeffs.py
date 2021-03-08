@@ -13,6 +13,7 @@ sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
 
 import misc
 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 M, N = 512, 512
 J = 8
@@ -38,7 +39,7 @@ b = coeffs
 print(time.time() - start)
 wph_op.to("cpu")
 
-os.chdir('/home/bruno/Bureau/These ENS/Projets/Planck_denoising/Scripts/CompSepAlgo/')
+os.chdir('/home/bruno/Bureau/These ENS/Outils/pywph/pywph/pywph/')
 start = time.time()
 stat_params = {"J": 8, "L": 8, "delta_j": 7, "delta_l": 4, "delta_n": 0,
                "scaling_function_moments": [0, 1, 2, 3], "nb_chunks": 28}
@@ -51,13 +52,13 @@ a = wph_op_old.apply(data)
 print(time.time() - start)
 wph_op_old.stat_op.cpu()
 
-nb_scaling_moments = 2 * (J - 3) * 4
+nb_scaling_moments = (1 + int(torch.is_complex(data_torch))) * (J - 3) * 4
 
 # Renaming
 a_indices = a.wph_indices
 a_coeffs = a.wph
 b_indices = wph_op.wph_cov_indices.cpu().numpy()
-b_coeffs = b.cpu().numpy()[:-nb_scaling_moments, 0] + 1j*b.cpu().numpy()[:-nb_scaling_moments, 1]
+b_coeffs = b.cpu().numpy()[:-nb_scaling_moments]
 assert(a_coeffs.shape == b_coeffs.shape)
 
 # Reordering
@@ -76,6 +77,8 @@ print("WPH", np.absolute(a_coeffs_new - b_coeffs_new).max())
 # Renaming
 a_indices = a.wph_lp_indices
 a_coeffs = a.wph_lp.ravel()
-b_coeffs = b.cpu().numpy()[-nb_scaling_moments:, 0] + 1j*b.cpu().numpy()[-nb_scaling_moments:, 1]
+b_coeffs = b.cpu().numpy()[-nb_scaling_moments:]
+if a_coeffs.shape != b_coeffs.shape:
+    a_coeffs = a_coeffs[:a_coeffs.shape[0] // 2]
 assert(a_coeffs.shape == b_coeffs.shape)
 print("SM", np.absolute(a_coeffs - b_coeffs).max())

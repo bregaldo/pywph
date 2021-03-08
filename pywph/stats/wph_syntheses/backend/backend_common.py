@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.nn import ReflectionPad2d
 from torch.autograd import Function
 import numpy as np
+from torch.fft import fftn, ifftn
 
 
 def iscomplex(input):
@@ -87,7 +88,7 @@ class SubInitSpatialMeanC(object):
                 minput = input.clone().detach()
                 minput = torch.mean(minput, -2, True)
                 minput = torch.mean(minput, -3, True)
-                minput = torch.mean(minput, 0, True)
+                #minput = torch.mean(minput, 0, True)
                 if self.is_isotropic:
                     minput = torch.mean(minput, 1, True)
                 if nbr_of_coeff is not None:
@@ -115,7 +116,7 @@ class SubInitSpatialMeanC(object):
             minput = input.clone().detach()
             minput = torch.mean(minput, -2, True)
             minput = torch.mean(minput, -3, True)
-            minput = torch.mean(minput, 0, True)
+            #minput = torch.mean(minput, 0, True)
             if self.is_isotropic:
                 minput = torch.mean(minput, 1, True)
             if nbr_of_coeff is not None:
@@ -194,12 +195,14 @@ def fft(input, inverse=False):
         raise (RuntimeError('Tensors must be contiguous!'))
 
     if inverse:
-        output = torch.ifft(input, 2, normalized=False)
+        output = ifftn(input[..., 0] + 1j*input[..., 1], s=(-1, -1))
+        #output = torch.ifft(input, 2, normalized=False)
         #output = torch.fft.ifft(input, 2, norm= "forward")
     else:
-        output = torch.fft(input, 2, normalized=False)
+        output = fftn(input[..., 0] + 1j*input[..., 1], s=(-1, -1))
+        #output = torch.fft(input, 2, normalized=False)
         #output = torch.fft.fft(input, 2, norm= "forward")
-
+    output = torch.stack((output.real, output.imag), dim=-1)
     return output
 
 

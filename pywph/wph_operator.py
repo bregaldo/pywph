@@ -8,7 +8,7 @@ import multiprocessing as mp
 import time
 
 from .filters import GaussianFilter, BumpSteerableWavelet
-from .utils import to_torch, get_precision_type, get_memory_available, fft, ifft, mul, mean, modulus, PhaseHarmonics, PowerHarmonics
+from .utils import to_torch, get_precision_type, get_memory_available, fft, ifft, phase_harmonics, power_harmonics
 from .wph_models import build_cov_indices
 torch.backends.cudnn.enabled = (
     True  # make sure to use cudnn for computational performance
@@ -24,7 +24,7 @@ def _build_bp_para(theta_list, bp_filter_cls, M, N, j, L, k0, dn, alpha_list):
                 ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, fourier=True).data)
             else:
                 for alpha in alpha_list:
-                    # Here Tanguy uses 3*n/2 instead of n, why ?
+                    # Here Tanguy uses 3*n instead of n, why ?
                     ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, n=3*n, alpha=alpha, fourier=True).data)
     return ret
 
@@ -225,7 +225,7 @@ class WPHOp():
         if self.nb_chunks_sm != 0:
             self._indices_p = torch.tensor(self.sm_model_params['p']).to(self.device) # (P)
             
-    def preconfigure(self, data, requires_grad=False, mem_chunk_factor=15, mem_chunk_factor_grad=30):
+    def preconfigure(self, data, requires_grad=False, mem_chunk_factor=20, mem_chunk_factor_grad=40):
         data = to_torch(data, device=self.device, precision=self.precision)
         data_size = 1
         for elt in data.shape:
@@ -252,8 +252,6 @@ class WPHOp():
     
     def apply_chunk(self, data, data_wt, chunk_id):
         if chunk_id < self.nb_chunks_wph: # Estimation of the WPH moments
-            phase_harmonics = PhaseHarmonics.apply
-        
             cov_index = chunk_id * self.nb_wph_cov_per_chunk
 
             curr_cov_indices = self.wph_cov_indices[cov_index: cov_index + self.nb_wph_cov_per_chunk]
@@ -274,31 +272,27 @@ class WPHOp():
             # xpsi2 = ifft(data_wt_f_2)
 
             xpsi1 = data_wt[..., curr_psi_1_indices, :, :]
-            xpsi1_k1 = phase_harmonics(xpsi1, curr_cov_indices[:, 2],
-                                       curr_indices_k1_0, curr_indices_k1_1, curr_indices_other_k1)
+            xpsi1_k1 = phase_harmonics(xpsi1, curr_cov_indices[:, 2])
             del xpsi1
             
             xpsi2 = data_wt[..., curr_psi_2_indices, :, :]
-            xpsi2_k2 = phase_harmonics(xpsi2, curr_cov_indices[:, 5],
-                                       curr_indices_k2_0, curr_indices_k2_1, curr_indices_other_k2)
+            xpsi2_k2 = phase_harmonics(xpsi2, curr_cov_indices[:, 5])
             del xpsi2
             
             # Take the complex conjugate of xpsi2_k2
             xpsi2_k2 = torch.conj(xpsi2_k2)
             
             # Substract the mean
-            xpsi1_k1 -= mean(xpsi1_k1, (-1, -2), keepdim=True)
-            xpsi2_k2 -= mean(xpsi2_k2, (-1, -2), keepdim=True)
+            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
             
             # Compute correlation and covariance
             corr = xpsi1_k1 * xpsi2_k2
             del xpsi1_k1, xpsi2_k2
-            cov = mean(corr, (-1, -2))
+            cov = torch.mean(corr, (-1, -2))
             del corr
             return cov
         elif chunk_id == self.nb_chunks_wph and self.nb_chunks_sm != 0: # Estimation of the scaling moments (if needed)
-            power_harmonics = PowerHarmonics.apply
-            
             # Separate real and imaginary parts of input data if complex data
             if torch.is_complex(data):
                 data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
@@ -310,7 +304,7 @@ class WPHOp():
                 data_new = data.unsqueeze(-3).unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, 1, M, N)
                 
             # Subtract the mean to avoid a bias due to a non-zero mean of the signal
-            data_new -= mean(data_new, (-1, -2), keepdim=True)
+            data_new -= torch.mean(data_new, (-1, -2), keepdim=True)
             
             # Convolution with scaling functions
             data_f = fft(data_new)
@@ -321,15 +315,16 @@ class WPHOp():
             del data_st_f
             
             # Compute moments
+            data_st = data_st.expand(data_st.shape[:-3] + self._indices_p.shape + data_st.shape[-2:])
             data_st_p = power_harmonics(data_st, self._indices_p)
             del data_st
             
             # Substract mean
-            data_st_p -= mean(data_st_p, (-1, -2), keepdim=True) # (..., 2, J-3, P, M, N)
+            data_st_p -= torch.mean(data_st_p, (-1, -2), keepdim=True) # (..., ?, J-3, P, M, N)
             
             # Compute covariance
             data_st_p = torch.abs(data_st_p)
-            cov = mean(data_st_p * data_st_p, (-1, -2))
+            cov = torch.mean(data_st_p * data_st_p, (-1, -2))
             cov = cov.view(data_st_p.shape[:-5] + (data_st_p.shape[-5]*data_st_p.shape[-4]*data_st_p.shape[-3],)) # (..., ?*(J-3)*P)
             del data_st_p
             return cov

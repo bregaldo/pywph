@@ -8,11 +8,8 @@ import os
 import torch
 import sys
 
-sys.path.append("/home/bruno/Bureau/These ENS/Projets/Planck_denoising/Scripts/CompSepAlgo/")
-sys.path.append("/obs/bregaldo-saintblancard/Projets/Denoising/CompSepAlgo/")
-
-from stats.wph_syntheses.wph_operator import PhaseHarmonics2d
-from stats.wph_syntheses.utils import periodic_dis
+from .stats.wph_syntheses.wph_operator import PhaseHarmonics2d
+from .stats.wph_syntheses.utils import periodic_dis
 
 
 class WPHOp_old:

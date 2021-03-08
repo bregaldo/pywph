@@ -33,31 +33,25 @@ def get_precision_type(precision, module="numpy", cplx=False):
         DESCRIPTION.
 
     """
+    if module == "numpy":
+        mod = np
+    elif module == "torch":
+        mod = torch
+    else:
+        raise Exception("Unknown module!")
+    
     if precision == "single":
-        if module == "numpy":
-            if cplx:
-                return np.complex64
-            else:
-                return np.float32
-        elif module == "torch":
-            if cplx:
-                return torch.complex64
-            else:
-                return torch.float32
+        if cplx:
+            return mod.complex64
+        else:
+            return mod.float32
     elif precision == "double":
-        if module == "numpy":
-            if cplx:
-                return np.complex128
-            else:
-                return np.float64
-        elif module == "torch":
-            if cplx:
-                return torch.complex128
-            else:
-                return torch.float64
+        if cplx:
+            return mod.complex128
+        else:
+            return mod.float64
     else:
         raise Exception("precision parameter must be equal to either 'single' or 'double'!")
-    raise Exception("Unknown module!")
 
 
 def to_torch(data, device=None, precision="single"):
@@ -141,191 +135,150 @@ def get_memory_available(device):
 
 
 def fft(z):
+    """
+    Torch 2D FFT wrapper. No padding. The FFT is applied to the 2 last dimensions.
+
+    Parameters
+    ----------
+    z : tensor
+        Input.
+
+    Returns
+    -------
+    tensor
+        Output.
+
+    """
     return fftn(z, s=(-1, -1))
 
 
 def ifft(z):
+    """
+    Torch 2D IFFT wrapper. No padding. The IFFT is applied to the 2 last dimensions.
+
+    Parameters
+    ----------
+    z : tensor
+        Input.
+
+    Returns
+    -------
+    tensor
+        Output.
+
+    """
     return ifftn(z, s=(-1, -1))
 
 
 def real(z):
-    return z.real
+    """
+    Returns the real part of pytorch tensor.
+
+    Parameters
+    ----------
+    z : tensor
+        Input.
+
+    Returns
+    -------
+    tensor
+        Output.
+
+    """
+    if torch.is_complex(z):
+        return z.real
+    else:
+        return z
 
 
 def imag(z):
-    return z.imag
+    """
+    Returns the imaginary part of pytorch tensor.
 
+    Parameters
+    ----------
+    z : tensor
+        Input.
 
-def mean(z, axes=(-1, -2), keepdim=False):
+    Returns
+    -------
+    tensor
+        Output.
+
+    """
     if torch.is_complex(z):
-        return torch.mean(z.real, axes, keepdim=keepdim) + 1j*torch.mean(z.imag, axes, keepdim=keepdim)
+        return z.imag
     else:
-        return torch.mean(z, axes, keepdim=keepdim)
+        return torch.zeros_like(z)
 
 
-def mul(z1, z2):
-    zr = real(z1) * real(z2) - imag(z1) * imag(z2)
-    zi = real(z1) * imag(z2) + imag(z1) * real(z2)
-    z = torch.stack((zr, zi), dim=-1)
-    return z
+def phase_harmonics(z, k):
+    """
+    Compute the phase harmonics of the input tensor.
+
+    Parameters
+    ----------
+    z : tensor
+        Input.
+    k : tensor
+        Exponents.
+
+    Returns
+    -------
+    result : tensor
+        Output.
+
+    """
+    indices_k_0 = torch.where(k == 0)[0]
+    indices_k_1 = torch.where(k == 1)[0]
+    indices_other_k = torch.where(k >= 2)[0]
+    
+    result = z.clone()
+    del z
+    
+    # k == 0
+    result[..., indices_k_0, :, :] = torch.abs(result[..., indices_k_0, :, :]).to(result.dtype)
+    
+    # k == 1 is left unchanged
+    
+    # k >= 2
+    other_k = k[indices_other_k].unsqueeze(-1).unsqueeze(-1)
+    z_other_k = result[..., indices_other_k, :, :]
+    r = torch.abs(z_other_k)
+    theta = torch.angle(z_other_k)
+    result[..., indices_other_k, :, :] = r * (torch.cos(other_k*theta) + 1j*torch.sin(other_k*theta))
+    
+    return result
 
 
-def modulus(z):
-    norm = z.norm(p=2, dim=-1, keepdim=True)
-    return torch.cat([norm, torch.zeros_like(norm)], -1)
+def power_harmonics(z, k):
+    """
+    Compute the power harmonics of the input tensor.
 
+    Parameters
+    ----------
+    z : tensor
+        Input.
+    k : tensor
+        Exponents.
 
-class PhaseHarmonics(Function):
-    @staticmethod
-    def forward(ctx, z, k, indices_k_0=None, indices_k_1=None, indices_other_k=None):
-        """
-            z: (..., N_cov, M, N, 2)
-            k: (N_cov)
+    Returns
+    -------
+    result : tensor
+        Output.
 
-        Returns:
-            (..., N_cov, M, N, 2)
-
-        """
-        z =  z.detach()
-        
-        if indices_k_0 is None:
-            indices_k_0 = torch.where(k == 0)[0]
-        if indices_k_1 is None:
-            indices_k_1 = torch.where(k == 1)[0]
-        if indices_other_k is None:
-            indices_other_k = torch.where(k >= 2)[0]
-        other_k = k[indices_other_k]
-
-        z_0 = z[..., indices_k_0, :, :]
-        z_other_k = z[..., indices_other_k, :, :]
-
-        x_0, y_0 = real(z_0), imag(z_0)  # (..., ??, M, N)  (..., ??, M, N)
-        r_0 = torch.abs(z_0)
-        del z_0
-        
-        x, y = real(z_other_k), imag(z_other_k)  # (..., ??, M, N)  (..., ??, M, N)
-        r = torch.abs(z_other_k)  # (..., ??, M, N)
-        theta = torch.angle(z_other_k)  # (..., ??, M, N)
-        del z_other_k
-        
-        ctx.save_for_backward(x_0, y_0, x, y, k, indices_k_0, indices_k_1, indices_other_k)
-        del x_0, y_0, x, y
-        
-        ktheta = other_k.unsqueeze(-1).unsqueeze(-1) * theta  # (??, M, N)
-        eiktheta = torch.cos(ktheta) + 1j*torch.sin(ktheta)  # (??, M, N)
-        result_other_k = r * eiktheta  # (..., ??, M, N)
-        del r, theta, ktheta, eiktheta
-
-        result = z.clone()
-        result[..., indices_k_0, :, :] = r_0 + 1j*0 # 1j*0 for dtype consistency
-        result[..., indices_other_k, :, :] = result_other_k
-
-        return result
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """
-            grad_output: (..., N_cov, M, N, 2)
-
-        Returns: (..., N_cov, M, N, 2), (N_cov) (k gradient not used)
-
-        """
-        x_0, y_0, x, y, k, indices_k_0, indices_k_1, indices_other_k = ctx.saved_tensors  # (..., ??, M, N)  (..., ??, M, N) (..., ??, M, N)  (..., ??, M, N) (N_cov) (??) (??) (??)
-
-        other_k = k[indices_other_k].unsqueeze(-1).unsqueeze(-1) # (??, 1, 1)
-
-        theta = torch.atan2(y, x)   # (..., ??, M, N)
-        ktheta = other_k * theta  # (..., ??, M, N)
-        cosktheta = torch.cos(ktheta)  # (..., ??, M, N)
-        sinktheta = torch.sin(ktheta)  # (..., ??, M, N)
-        costheta = torch.cos(theta)  # (..., ??, M, N)
-        sintheta = torch.sin(theta)  # (..., ??, M, N)
-
-        costheta_cosktheta = costheta * cosktheta  # (..., ??, M, N)
-        sintheta_sinktheta = sintheta * sinktheta  # (..., ??, M, N)
-        costheta_sinktheta = costheta * sinktheta  # (..., ??, M, N)
-        sintheta_cosktheta = sintheta * cosktheta  # (..., ??, M, N)
-
-        df1dx = costheta_cosktheta + other_k*sintheta_sinktheta  # (..., ??, M, N)
-        df2dx = costheta_sinktheta - other_k*sintheta_cosktheta  # (..., ??, M, N)
-        df1dy = sintheta_cosktheta - other_k*costheta_sinktheta  # (..., ??, M, N)
-        df2dy = sintheta_sinktheta + other_k*costheta_cosktheta  # (..., ??, M, N)
-
-        dx1_other_k = df1dx*grad_output[..., indices_other_k, :, :, 0] + df2dx*grad_output[..., indices_other_k, :, :, 1]  # (..., ??, M, N)
-        dx2_other_k = df1dy*grad_output[..., indices_other_k, :, :, 0] + df2dy*grad_output[..., indices_other_k, :, :, 1]  # (..., ??, M, N)
-
-        dx1_k_0 = torch.cos(torch.atan2(y_0, x_0)) * grad_output[..., indices_k_0, :, :, 0]  # (..., ??, M, N)
-        dx2_k_0 = torch.sin(torch.atan2(y_0, x_0)) * grad_output[..., indices_k_0, :, :, 0]  # (..., ??, M, N)
-
-        dx1_k_1 = grad_output[..., indices_k_1, :, :, 0]  # (..., ??, M, N)
-        dx2_k_1 = grad_output[..., indices_k_1, :, :, 1]  # (..., ??, M, N)
-
-        dx1 = grad_output.new_zeros((grad_output.size()[:5]))
-        dx2 = grad_output.new_zeros((grad_output.size()[:5]))
-
-        dx1[..., indices_k_0, :, :] = dx1_k_0
-        dx1[..., indices_k_1, :, :] = dx1_k_1
-        dx1[..., indices_other_k, :, :] = dx1_other_k
-
-        dx2[..., indices_k_0, :, :] = dx2_k_0
-        dx2[..., indices_k_1, :, :] = dx2_k_1
-        dx2[..., indices_other_k, :, :] = dx2_other_k
-
-        return torch.stack((dx1, dx2), -1), k, indices_k_0, indices_k_1, indices_other_k  # (..., N_cov, M, N, 2), (N_cov,) (??) (??) (??) (only first gradient is used)
-
-
-class PowerHarmonics(Function):
-    @staticmethod
-    def forward(ctx, z, k):
-        """
-            z: (..., N_cov, M, N, 2)
-            k: (N_cov)
-
-        Returns:
-            (..., N_cov, M, N, 2)
-
-        """
-        z =  z.detach()
-        k_unsqueeze = k.unsqueeze(-1).unsqueeze(-1) # (..., N_cov, 1, 1)
-        x, y = real(z), imag(z)  # (..., N_cov, M, N) (..., N_cov, M, N)
-        r = torch.abs(z)  # (..., N_cov, M, N)
-        theta = torch.angle(z)  # (..., N_cov, M, N)
-        ktheta = k_unsqueeze * theta  # (..., N_cov, M, N)
-        eiktheta = torch.cos(ktheta) + 1j*torch.sin(ktheta)  # (..., N_cov, M, N)
-        k_tilde = k_unsqueeze.clone()   # (..., N_cov, 1, 1)
-        k_tilde[torch.where(k_unsqueeze == 0)] = 1  # (..., N_cov, 1, 1)
-        ctx.save_for_backward(x, y, r, k_unsqueeze, k_tilde)
-        return torch.pow(r, k_tilde) * eiktheta  # (..., N_cov, M, N)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """
-        grad_output: (..., N_cov, M, N, 2)
-
-        Returns: (..., N_cov, M, N, 2), (N_cov) (k gradient not used)
-
-        """
-        x, y, r, k_unsqueeze, k_tilde = ctx.saved_tensors  # (..., N_cov, M, N) (..., N_cov, M, N) (..., N_cov, M, N) (..., N_cov, 1, 1) (..., N_cov, 1, 1)
-        theta = torch.atan2(y, x)  # (..., N_cov, M, N)
-        ktheta = k_unsqueeze * theta  # (..., N_cov, M, N)
-        cosktheta = torch.cos(ktheta)  # (..., N_cov, M, N)
-        sinktheta = torch.sin(ktheta)  # (..., N_cov, M, N)
-        costheta = torch.cos(theta)  # (..., N_cov, M, N)
-        sintheta = torch.sin(theta)  # (..., N_cov, M, N)
-
-        costheta_cosktheta = costheta * cosktheta  # (..., N_cov, M, N)
-        sintheta_sinktheta = sintheta * sinktheta  # (..., N_cov, M, N)
-        costheta_sinktheta = costheta * sinktheta  # (..., N_cov, M, N)
-        sintheta_cosktheta = sintheta * cosktheta  # (..., N_cov, M, N)
-
-        r_k_tilde_minus_1 = torch.pow(r, k_tilde-1)
-
-        df1dx = r_k_tilde_minus_1*(k_tilde*costheta_cosktheta + k_unsqueeze*sintheta_sinktheta)  # (..., N_cov, M, N)
-        df2dx = r_k_tilde_minus_1*(k_tilde*costheta_sinktheta - k_unsqueeze*sintheta_cosktheta)  # (..., N_cov, M, N)
-        df1dy = r_k_tilde_minus_1*(k_tilde*sintheta_cosktheta - k_unsqueeze*costheta_sinktheta)  # (..., N_cov, M, N)
-        df2dy = r_k_tilde_minus_1*(k_tilde*sintheta_sinktheta + k_unsqueeze*costheta_cosktheta)  # (..., N_cov, M, N)
-
-        dx1 = df1dx*grad_output[..., 0] + df2dx*grad_output[..., 1]  # (..., N_cov, M, N)
-        dx2 = df1dy*grad_output[..., 0] + df2dy*grad_output[..., 1]  # (..., N_cov, M, N)
-        
-        return torch.stack((dx1, dx2), -1), k_unsqueeze[:, 0, 0]  # (..., N_cov, M, N, 2) (N_cov) (k gradient not used)
+    """
+    indices_k_0 = torch.where(k == 0)[0]
+    indices_other_k = torch.where(k >= 1)[0]
+    
+    result = z.clone()
+    del z
+    
+    # k == 0
+    result[..., indices_k_0, :, :] = torch.abs(result[..., indices_k_0, :, :]).to(result.dtype)
+    
+    # k >= 1
+    other_k = k[indices_other_k].unsqueeze(-1).unsqueeze(-1)
+    result[..., indices_other_k, :, :] = result[..., indices_other_k, :, :] ** other_k
+    
+    return result
