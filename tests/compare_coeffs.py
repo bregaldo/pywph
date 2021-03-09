@@ -15,13 +15,15 @@ import misc
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
-M, N = 512, 512
-J = 8
+M, N = 256, 256
+J = 5
 L = 8
-dn = 0
+dn = 2
 cplx = True
 
-data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
+data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
+data = torch.from_numpy(data + 1j*data/2)
+data=data[:256, :256]
 # data.requires_grad = True
 
 start = time.time()
@@ -41,7 +43,7 @@ wph_op.to("cpu")
 
 os.chdir('/home/bruno/Bureau/These ENS/Outils/pywph/pywph/pywph/')
 start = time.time()
-stat_params = {"J": 8, "L": 8, "delta_j": 7, "delta_l": 4, "delta_n": 0,
+stat_params = {"J": J, "L": L, "delta_j": J-1, "delta_l": 4, "delta_n": dn,
                "scaling_function_moments": [0, 1, 2, 3], "nb_chunks": 28}
 wph_op_old = pw.WPHOp_old(N, N, stat_params)
 print(time.time() - start)

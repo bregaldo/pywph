@@ -230,20 +230,19 @@ def phase_harmonics(z, k):
 
     """
     indices_k_0 = torch.where(k == 0)[0]
-    indices_k_1 = torch.where(k == 1)[0]
     indices_other_k = torch.where(k >= 2)[0]
     
     result = z.clone()
     del z
     
     # k == 0
-    result[..., indices_k_0, :, :] = torch.abs(result[..., indices_k_0, :, :]).to(result.dtype)
+    result[..., indices_k_0, :, :] = torch.abs(torch.index_select(result, -3, indices_k_0)).to(result.dtype)
     
     # k == 1 is left unchanged
     
     # k >= 2
     other_k = k[indices_other_k].unsqueeze(-1).unsqueeze(-1)
-    z_other_k = result[..., indices_other_k, :, :]
+    z_other_k = torch.index_select(result, -3, indices_other_k)
     r = torch.abs(z_other_k)
     theta = torch.angle(z_other_k)
     result[..., indices_other_k, :, :] = r * (torch.cos(other_k*theta) + 1j*torch.sin(other_k*theta))
@@ -275,10 +274,10 @@ def power_harmonics(z, k):
     del z
     
     # k == 0
-    result[..., indices_k_0, :, :] = torch.abs(result[..., indices_k_0, :, :]).to(result.dtype)
-    
+    result[..., indices_k_0, :, :] = torch.abs(torch.index_select(result, -3, indices_k_0)).to(result.dtype)
+
     # k >= 1
     other_k = k[indices_other_k].unsqueeze(-1).unsqueeze(-1)
-    result[..., indices_other_k, :, :] = result[..., indices_other_k, :, :] ** other_k
+    result[..., indices_other_k, :, :] = (torch.index_select(result, -3, indices_other_k)) ** other_k
     
     return result

@@ -24,7 +24,7 @@ cplx = True
 
 data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
 data = data[:M, :N]
-# data.requires_grad = True
+data.requires_grad = True
 
 start = time.time()
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=cplx)
@@ -33,7 +33,7 @@ print(time.time() - start)
 
 # Method with grad but no backward
 res_record = []
-for mem_chunk_factor in range(8, 100, 5):
+for mem_chunk_factor in range(20, 100, 5):
     start = time.time()
     data, nb_chunks = wph_op.preconfigure(data, mem_chunk_factor=mem_chunk_factor)
     coeffs = []

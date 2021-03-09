@@ -45,8 +45,8 @@ print(time.time() - start)
 
 # Psi
 max_diff = 0.0
-for key in psi.keys():
-    diff = wph_op.psi[key] - psi[key]
+for index, key in enumerate(psi.keys()):
+    diff = wph_op.psi_f[index] - psi[key]
     max_val = np.absolute(diff).max()
     if max_val > max_diff:
         print(key)
@@ -55,8 +55,8 @@ print(max_diff)
 
 # Phi
 max_diff = 0.0
-for key in phi.keys():
-    diff = wph_op.phi[key] - phi[key]
+for index, key in enumerate(phi.keys()):
+    diff = wph_op.phi_f[index] - phi[key]
     max_val = np.absolute(diff).max()
     if max_val > max_diff:
         print(key)

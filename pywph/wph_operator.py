@@ -24,7 +24,7 @@ def _build_bp_para(theta_list, bp_filter_cls, M, N, j, L, k0, dn, alpha_list):
                 ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, fourier=True).data)
             else:
                 for alpha in alpha_list:
-                    # Here Tanguy uses 3*n instead of n, why ?
+                    # Consistent with Tanguys'code (3*n instead of n)
                     ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, n=3*n, alpha=alpha, fourier=True).data)
     return ret
 
@@ -36,7 +36,7 @@ class WPHOp():
     
     def __init__(self, M, N, J, L=8, cplx=False,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
-                 j_min=0, dn=0, alpha_list=[0.0, -np.pi/4, np.pi/4, np.pi/2],
+                 j_min=0, dn=0, alpha_list=[-np.pi/4, 0.0, np.pi/4, np.pi/2],
                  precision="single", device="cpu", wph_model="default", sm_model="default"):
         """
         Constructor.
@@ -271,11 +271,11 @@ class WPHOp():
             # xpsi1 = ifft(data_wt_f_1)
             # xpsi2 = ifft(data_wt_f_2)
 
-            xpsi1 = data_wt[..., curr_psi_1_indices, :, :]
+            xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
             xpsi1_k1 = phase_harmonics(xpsi1, curr_cov_indices[:, 2])
             del xpsi1
             
-            xpsi2 = data_wt[..., curr_psi_2_indices, :, :]
+            xpsi2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
             xpsi2_k2 = phase_harmonics(xpsi2, curr_cov_indices[:, 5])
             del xpsi2
             
@@ -301,7 +301,7 @@ class WPHOp():
                 data_new[..., 1, :, :] = data.imag
                 data_new = data_new.unsqueeze(-3).unsqueeze(-3) # (..., 2, 1, 1, M, N)
             else:
-                data_new = data.unsqueeze(-3).unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, 1, M, N)
+                data_new = data.clone().unsqueeze(-3).unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, 1, M, N)
                 
             # Subtract the mean to avoid a bias due to a non-zero mean of the signal
             data_new -= torch.mean(data_new, (-1, -2), keepdim=True)
