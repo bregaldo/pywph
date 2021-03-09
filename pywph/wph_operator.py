@@ -8,7 +8,6 @@ from functools import partial
 
 from .filters import GaussianFilter, BumpSteerableWavelet
 from .utils import to_torch, get_memory_available, fft, ifft, phase_harmonics, power_harmonics
-from .wph_models import build_cov_indices
 
 
 # Internal function for the parallel pre-building of the bandpass filters (see WPHOp.load_filters)
@@ -212,6 +211,12 @@ class WPHOp():
         
         wph_indices = []
         sm_indices = []
+        
+        # Moments counters
+        self._s11_cnt = 0
+        self._s00_cnt = 0
+        self._sc01_cnt = 0
+        self._l_cnt = 0
     
         for clas in classes:
             if clas == "S11":
@@ -220,16 +225,19 @@ class WPHOp():
                         dn_eff = min(self.J - 1 - j1, self.dn)
                         for n in range(dn_eff * len(self.alpha_list) + 1):
                             wph_indices.append([j1, t1, 1, j1, t1, 1, n])
+                            self._s11_cnt += 1
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
                         dn_eff = min(self.J - 1 - j1, self.dn)
                         for n in range(dn_eff * len(self.alpha_list) + 1):
                             wph_indices.append([j1, t1, 0, j1, t1, 0, n])
+                            self._s00_cnt += 1
             elif clas == "S01":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
                         wph_indices.append([j1, t1, 0, j1, t1, 1, 0])
+                        self._sc01_cnt += 1
             elif clas == "C01":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, self.J):
@@ -239,8 +247,10 @@ class WPHOp():
                                     dn_eff = min(self.J - 1 - j2, self.dn)
                                     for n in range(dn_eff * len(self.alpha_list) + 1):
                                         wph_indices.append([j1, t1, 0, j2, t2, 1, n])
+                                        self._sc01_cnt += 1
                                 else:
                                     wph_indices.append([j1, t1, 0, j2, t2 % (2 * self.L), 1, 0])
+                                    self._sc01_cnt += 1
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, self.J):
@@ -253,6 +263,7 @@ class WPHOp():
                 for j in range(max(self.j_min, 2), self.J - 1):
                     for p in range(4):
                         sm_indices.append([j, p])
+                        self._l_cnt
             else:
                 raise Exception(f"Unknown class of moments: {clas}")
         
@@ -278,7 +289,7 @@ class WPHOp():
         
         self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
             
-    def _prepare_computation(self, data_size, requires_grad=False, mem_chunk_factor=20, mem_chunk_factor_grad=30):
+    def _prepare_computation(self, data_size, requires_grad=False, mem_chunk_factor=20, mem_chunk_factor_grad=35):
         # Compute the number of chunks needed
         mem_avail = get_memory_available(self.device)
         if requires_grad:
@@ -289,13 +300,60 @@ class WPHOp():
             raise Exception("Error! Not enough memory on device.")
         print(get_memory_available(self.device), self.nb_wph_cov_per_chunk)
         
+        #
+        # Divide the WPH moments into chunks
+        #
+        
         cov_index = 0
-        cnt_chunks = 0
+        self.wph_moments_chunk_list = []
+        self.nb_chunks_s11 = 0
+        self.nb_chunks_s00 = 0
+        self.nb_chunks_sc01 = 0
+        self.nb_chunks_others = 0
+        
+        # S11 moments
+        while cov_index < self._s11_cnt:
+            if cov_index + self.nb_wph_cov_per_chunk <= self._s11_cnt:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, cov_index + self.nb_wph_cov_per_chunk).to(self.device))
+                cov_index += self.nb_wph_cov_per_chunk
+            else:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, self._s11_cnt).to(self.device))
+                cov_index += self._s11_cnt - cov_index
+            self.nb_chunks_s11 += 1
+        
+        # S00 moments
+        while cov_index < self._s11_cnt + self._s00_cnt:
+            if cov_index + self.nb_wph_cov_per_chunk <= self._s11_cnt + self._s00_cnt:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, cov_index + self.nb_wph_cov_per_chunk).to(self.device))
+                cov_index += self.nb_wph_cov_per_chunk
+            else:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, self._s11_cnt + self._s00_cnt).to(self.device))
+                cov_index += self._s11_cnt + self._s00_cnt - cov_index
+            self.nb_chunks_s00 += 1
+        
+        # S01 and C01 moments
+        while cov_index < self._s11_cnt + self._s00_cnt + self._sc01_cnt:
+            if cov_index + self.nb_wph_cov_per_chunk <= self._s11_cnt + self._s00_cnt + self._sc01_cnt:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, cov_index + self.nb_wph_cov_per_chunk).to(self.device))
+                cov_index += self.nb_wph_cov_per_chunk
+            else:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, self._s11_cnt + self._s00_cnt + self._sc01_cnt).to(self.device))
+                cov_index += self._s11_cnt + self._s00_cnt + self._sc01_cnt - cov_index
+            self.nb_chunks_sc01 += 1
+        
+        # Other moments (Cphase and extra)
         while cov_index < len(self.wph_moments_indices):
-            cov_index += self.nb_wph_cov_per_chunk
-            cnt_chunks += 1
-            
-        self.nb_chunks_wph = cnt_chunks
+            if cov_index + self.nb_wph_cov_per_chunk <= len(self.wph_moments_indices):
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, cov_index + self.nb_wph_cov_per_chunk).to(self.device))
+                cov_index += self.nb_wph_cov_per_chunk
+            else:
+                self.wph_moments_chunk_list.append(torch.arange(cov_index, len(self.wph_moments_indices)).to(self.device))
+                cov_index += len(self.wph_moments_indices) - cov_index
+            self.nb_chunks_others += 1
+        
+        # No need to divide the scaling moments into chunks (generally there are too few of them)
+        
+        self.nb_chunks_wph = len(self.wph_moments_chunk_list) # Also equal to self.nb_chunks_s11 + self.nb_chunks_s00 + self.nb_chunks_sc01 + self.nb_chunks_others
         self.nb_chunks_sm = int(len(self.scaling_moments_indices) != 0) # 1 more chunk if scaling moments needed
         self.nb_chunks = self.nb_chunks_wph + self.nb_chunks_sm
         
@@ -303,7 +361,8 @@ class WPHOp():
             # Tmp
             self._indices_p = torch.tensor(np.arange(4)).to(self.device) # (P)
             
-    def preconfigure(self, data, requires_grad=False, mem_chunk_factor=20, mem_chunk_factor_grad=30):
+    def preconfigure(self, data, requires_grad=False,
+                     mem_chunk_factor=20, mem_chunk_factor_grad=35):
         data = to_torch(data, device=self.device, precision=self.precision)
         data_size = 1
         for elt in data.shape:
@@ -313,12 +372,22 @@ class WPHOp():
         if requires_grad:
             data.requires_grad = True
         
-        data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
-        data_wt_f = data_f * self.psi_f
-        del data_f
-        data_wt = ifft(data_wt_f)
-        del data_wt_f
-        self._tmp_data_wt = data_wt # We keep this variable in memory
+        mem_avail = get_memory_available(self.device)
+        
+        # Precompute the wavelet transform if we have enough memory
+        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
+            print("Enough memory to store the wavelet transform of input data.")
+            data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+            data_wt_f = data_f * self.psi_f
+            del data_f
+            data_wt = ifft(data_wt_f)
+            del data_wt_f
+            self._tmp_data_wt = data_wt # We keep this variable in memory
+        
+        # Precompute the modulus of the wavelet transform if we have enough memory
+        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
+            print("Enough memory to store the modulus of the wavelet transform of input data.")
+            self._tmp_data_wt_mod = torch.abs(self._tmp_data_wt) # We keep this variable in memory
         
         self._prepare_computation(data_size, requires_grad=data.requires_grad,
                                   mem_chunk_factor=mem_chunk_factor, mem_chunk_factor_grad=mem_chunk_factor_grad)
@@ -327,30 +396,111 @@ class WPHOp():
     
     def free(self):
         del self._tmp_data_wt
+        del self._tmp_data_wt_mod
     
-    def apply_chunk(self, data, data_wt, chunk_id):
-        if chunk_id < self.nb_chunks_wph: # Estimation of the WPH moments
-            cov_index = chunk_id * self.nb_wph_cov_per_chunk
-
-            curr_cov_indices = self.wph_moments_indices[cov_index: cov_index + self.nb_wph_cov_per_chunk]
-            curr_psi_1_indices = self._psi_1_indices[cov_index: cov_index + self.nb_wph_cov_per_chunk]
-            curr_psi_2_indices = self._psi_2_indices[cov_index: cov_index + self.nb_wph_cov_per_chunk]
+    def apply_chunk(self, data, chunk_id):
+        if chunk_id < self.nb_chunks_wph: # WPH moments:
+            cov_chunk = self.wph_moments_chunk_list[chunk_id]
+            cov_indices = self.wph_moments_indices[cov_chunk]
             
-            # data_f = fft(data).unsqueeze(-4) # (..., 1, M, N, 2)
-            # data_wt_f_1 = mul(data_f, self.psi_f[curr_psi_1_indices])
-            # data_wt_f_2 = mul(data_f, self.psi_f[curr_psi_2_indices])
-            # del data_f
-            # xpsi1 = ifft(data_wt_f_1)
-            # xpsi2 = ifft(data_wt_f_2)
-
-            xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
-            xpsi1_k1 = phase_harmonics(xpsi1, curr_cov_indices[:, 2])
-            del xpsi1
+            curr_psi_1_indices = self._psi_1_indices[cov_chunk]
+            curr_psi_2_indices = self._psi_2_indices[cov_chunk]
             
-            xpsi2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
-            xpsi2_k2 = phase_harmonics(xpsi2, curr_cov_indices[:, 5])
-            del xpsi2
-            
+            if chunk_id < self.nb_chunks_s11: # S11 moments
+                # If the wavelet transform is not precomputed we compute the relevant part of it
+                # Otherwise we extract the relevant part from memory
+                if not hasattr(self, '_tmp_data_wt'):
+                    data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                    data_wt_f_1 = data_f * self.psi_f[curr_psi_1_indices]
+                    data_wt_f_2 = data_f * self.psi_f[curr_psi_2_indices]
+                    del data_f
+                    xpsi1 = ifft(data_wt_f_1)
+                    xpsi2 = ifft(data_wt_f_2)
+                    del data_wt_wt_f_1, data_wt_f_2
+                else: 
+                    data_wt = self._tmp_data_wt
+                    xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
+                    xpsi2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
+                
+                # No phase harmonics for S11
+                xpsi1_k1 = xpsi1
+                xpsi2_k2 = xpsi2
+                del xpsi1, xpsi2
+            elif chunk_id < self.nb_chunks_s11 + self.nb_chunks_s00: # S00 moments
+                # If the modulus of the wavelet transform is not precomputed we compute the relevant part of it
+                # Otherwise we extract the relevant part from memory
+                if not hasattr(self, '_tmp_data_wt_mod'):
+                    if not hasattr(self, '_tmp_data_wt'):
+                        data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                        data_wt_f_1 = data_f * self.psi_f[curr_psi_1_indices]
+                        data_wt_f_2 = data_f * self.psi_f[curr_psi_2_indices]
+                        del data_f
+                        xpsi1 = ifft(data_wt_f_1)
+                        xpsi2 = ifft(data_wt_f_2)
+                        del data_wt_wt_f_1, data_wt_f_2
+                    else:
+                        data_wt = self._tmp_data_wt
+                        xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
+                        xpsi2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
+                    xpsi1_k1 = torch.abs(xpsi1)
+                    xpsi2_k2 = torch.abs(xpsi2)
+                    del xpsi1, xpsi2
+                else: 
+                    data_wt_mod = self._tmp_data_wt_mod
+                    xpsi1_k1 = torch.index_select(data_wt_mod, -3, curr_psi_1_indices) # Equivalent to data_wt_mod[..., curr_psi_1_indices, :, :]
+                    xpsi2_k2 = torch.index_select(data_wt_mod, -3, curr_psi_2_indices) # Equivalent to data_wt_mod[..., curr_psi_2_indices, :, :]
+            elif chunk_id < self.nb_chunks_s11 + self.nb_chunks_s00 + self.nb_chunks_sc01: # S01/C01 moments
+                # If the wavelet transform is not precomputed we compute the relevant part of it
+                # Otherwise we extract the relevant part from memory
+                if not hasattr(self, '_tmp_data_wt'):
+                    data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                    data_wt_f_2 = data_f * self.psi_f[curr_psi_2_indices]
+                    del data_f
+                    xpsi2_k2 = ifft(data_wt_f_2)
+                    del data_wt_f_2
+                else: 
+                    data_wt = self._tmp_data_wt
+                    xpsi2_k2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
+                
+                # If the modulus of the wavelet transform is not precomputed we compute the relevant part of it
+                # Otherwise we extract the relevant part from memory
+                if not hasattr(self, '_tmp_data_wt_mod'):
+                    if not hasattr(self, '_tmp_data_wt'):
+                        data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                        data_wt_f_1 = data_f * self.psi_f[curr_psi_1_indices]
+                        del data_f
+                        xpsi1 = ifft(data_wt_f_1)
+                        del data_wt_wt_f_1
+                    else:
+                        data_wt = self._tmp_data_wt
+                        xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
+                    xpsi1_k1 = torch.abs(xpsi1)
+                    del xpsi1
+                else: 
+                    data_wt_mod = self._tmp_data_wt_mod
+                    xpsi1_k1 = torch.index_select(data_wt_mod, -3, curr_psi_1_indices) # Equivalent to data_wt_mod[..., curr_psi_1_indices, :, :]
+            elif chunk_id < self.nb_chunks_wph: # Other moments
+                # If the wavelet transform is not precomputed we compute the relevant part of it
+                # Otherwise we extract the relevant part from memory
+                if not hasattr(self, '_tmp_data_wt'):
+                    data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                    data_wt_f_1 = data_f * self.psi_f[curr_psi_1_indices]
+                    data_wt_f_2 = data_f * self.psi_f[curr_psi_2_indices]
+                    del data_f
+                    xpsi1 = ifft(data_wt_f_1)
+                    xpsi2 = ifft(data_wt_f_2)
+                    del data_wt_wt_f_1, data_wt_f_2
+                else: 
+                    data_wt = self._tmp_data_wt
+                    xpsi1 = torch.index_select(data_wt, -3, curr_psi_1_indices) # Equivalent to data_wt[..., curr_psi_1_indices, :, :]
+                    xpsi2 = torch.index_select(data_wt, -3, curr_psi_2_indices) # Equivalent to data_wt[..., curr_psi_2_indices, :, :]
+                
+                # Phase harmonics
+                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2])
+                del xpsi1
+                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5])
+                del xpsi2
+                
             # Take the complex conjugate of xpsi2_k2
             xpsi2_k2 = torch.conj(xpsi2_k2)
             
@@ -364,7 +514,7 @@ class WPHOp():
             cov = torch.mean(corr, (-1, -2))
             del corr
             return cov
-        elif chunk_id == self.nb_chunks_wph and self.nb_chunks_sm != 0: # Estimation of the scaling moments (if needed)
+        elif chunk_id < self.nb_chunks: # Scaling moments
             # Separate real and imaginary parts of input data if complex data
             if torch.is_complex(data):
                 data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
@@ -400,25 +550,22 @@ class WPHOp():
             cov = cov.view(data_st_p.shape[:-5] + (data_st_p.shape[-5]*data_st_p.shape[-4]*data_st_p.shape[-3],)) # (..., ?*(J-3)*P)
             del data_st_p
             return cov
-        else:
+        else: # Invalid
             raise Exception("Invalid chunk_id!")
+
         
     def apply(self, data, chunk_id=None, requires_grad=False):
         if chunk_id is None:
             data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
-        else:
-            if not hasattr(self, '_tmp_data_wt'):
-                raise Exception("Call preconfigure method first!")
-        data_wt = self._tmp_data_wt
         
         if chunk_id is None: # Compute all chunks in one time
             coeffs = []
             for i in range(self.nb_chunks):
-                cov = self.apply_chunk(data, data_wt, i)
+                cov = self.apply_chunk(data, i)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
         else: # Compute selected chunk
-            coeffs = self.apply_chunk(data, data_wt, chunk_id)
+            coeffs = self.apply_chunk(data, chunk_id)
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:

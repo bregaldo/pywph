@@ -7,10 +7,6 @@ import pywph as pw
 import astropy.io.fits as fits
 import torch
 
-sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
-
-import misc
-
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 M, N = 512, 512
@@ -27,12 +23,13 @@ print(time.time() - start)
 
 wph_op.to(0)
 start = time.time()
-data, nb_chunks = wph_op.preconfigure(data, requires_grad=True, mem_chunk_factor_grad=35)
+data, nb_chunks = wph_op.preconfigure(data, requires_grad=True)
 for i in range(nb_chunks):
     print(i, f"/{nb_chunks}")
     coeffs = wph_op.apply(data, i)
     loss = (torch.abs(coeffs) ** 2).mean()
     loss.backward(retain_graph=True)
+    del coeffs, loss
 print(time.time() - start)
 wph_op.to("cpu")
 

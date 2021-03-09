@@ -11,10 +11,6 @@ import torch
 import cProfile
 import torch.autograd.profiler as profiler
 
-sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
-
-import misc
-
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 M, N = 512, 512
@@ -68,6 +64,8 @@ for i in range(nb_chunks):
     coeffs = wph_op.apply(data, i)
     loss = (torch.abs(coeffs) ** 2).mean()
     loss.backward(retain_graph=True)
+    coeffs = None
+    loss = None
 # p.disable()
 # p.dump_stats("nom_de_fichier.prof")
 

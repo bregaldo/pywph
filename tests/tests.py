@@ -7,13 +7,7 @@ import matplotlib.pyplot as plt
 import time
 import astropy.io.fits as fits
 import torch
-
-sys.path.append("/home/bruno/Bureau/These ENS/Outils/pywph/pywph/")
-sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
 import pywph as pw
-
-import misc
-
 
 M, N = 512, 512
 J = 8

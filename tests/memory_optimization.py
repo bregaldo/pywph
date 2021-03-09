@@ -9,12 +9,7 @@ import pywph as pw
 import astropy.io.fits as fits
 import torch
 
-sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
-
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-import misc
-
 
 M, N = 256, 256
 J = 6

@@ -7,10 +7,6 @@ import matplotlib.pyplot as plt
 import pywph as pw
 import time
 
-sys.path.append('/home/bruno/Bureau/These ENS/Outils/misc/')
-
-import misc
-
 M, N = 512, 512
 J = 8
 L = 8
