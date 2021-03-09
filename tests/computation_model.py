@@ -61,6 +61,7 @@ print(time.time() - start)
 # Method 3 with grad but and backward
 # p = cProfile.Profile(time.process_time)
 # p.enable()
+start = time.time()
 data, nb_chunks = wph_op.preconfigure(data)
 for i in range(nb_chunks):
     print(i)

@@ -59,7 +59,7 @@ nb_scaling_moments = (1 + int(torch.is_complex(data_torch))) * (J - 3) * 4
 # Renaming
 a_indices = a.wph_indices
 a_coeffs = a.wph
-b_indices = wph_op.wph_cov_indices.cpu().numpy()
+b_indices = wph_op.wph_moments_indices.cpu().numpy()
 b_coeffs = b.cpu().numpy()[:-nb_scaling_moments]
 assert(a_coeffs.shape == b_coeffs.shape)
 
