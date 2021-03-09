@@ -130,8 +130,9 @@ class WPHOp():
             build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=bp_filter_cls,
                                         M=self.M, N=self.N, j=j, L=self.L,
                                         k0=k0, dn=self.dn, alpha_list=self.alpha_list)
-            nb_processes = os.cpu_count()
-            work_list = np.array_split(np.arange(self.L * (1 + self.cplx)), nb_processes)
+            work = np.arange(self.L * (1 + self.cplx))
+            nb_processes = min(os.cpu_count(), len(work))
+            work_list = np.array_split(work, nb_processes)
             pool = mp.Pool(processes=nb_processes) # "Spawn" context for macOS compatibility
             results = pool.map(build_bp_para_loc, work_list)
             bp_filters = []
