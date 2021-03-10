@@ -16,6 +16,7 @@ J = 8
 L = 8
 dn = 0
 cplx = True
+norm = None
 
 data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
 data = data[:M, :N]
@@ -28,12 +29,12 @@ print(time.time() - start)
 
 # Method with grad but no backward
 res_record = []
-for mem_chunk_factor in range(20, 100, 5):
+for mem_chunk_factor in range(25, 100, 5):
     start = time.time()
     data, nb_chunks = wph_op.preconfigure(data, mem_chunk_factor=mem_chunk_factor)
     coeffs = []
     for i in range(nb_chunks):
-        coeffs.append(wph_op.apply(data, i).detach())
+        coeffs.append(wph_op.apply(data, i, norm=norm).detach())
     coeffs = torch.cat(coeffs, -1)
     b = coeffs
     ell_time = time.time() - start

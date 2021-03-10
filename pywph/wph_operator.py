@@ -74,6 +74,13 @@ class WPHOp(torch.nn.Module):
         
         self.preconfigured = False # Precomputation configuration
         
+        # Normalization variables
+        self.norm_wph_means = None
+        self.norm_wph_stds = None
+        self.norm_sm_means_1 = None
+        self.norm_sm_means_2 = None
+        self.norm_sm_stds = None
+        
     def to(self, device):
         """
         Move the data (filters, etc) to the specified device (GPU or CPU).
@@ -99,6 +106,17 @@ class WPHOp(torch.nn.Module):
             self.scaling_moments_indices = self.scaling_moments_indices.to(device)
             self._psi_1_indices = self._psi_1_indices.to(device)
             self._psi_2_indices = self._psi_2_indices.to(device)
+            
+            if self.norm_wph_means is not None:
+                self.norm_wph_means = self.norm_wph_means.to(device)
+            if self.norm_wph_stds is not None:
+                self.norm_wph_stds = self.norm_wph_stds.to(device)
+            if self.norm_sm_means_1 is not None:
+                self.norm_sm_means_1 = self.norm_sm_means_1.to(device)
+            if self.norm_sm_means_2 is not None:
+                self.norm_sm_means_2 = self.norm_sm_means_2.to(device)
+            if self.norm_sm_stds is not None:
+                self.norm_sm_stds = self.norm_sm_stds.to(device)
             
             self.device = device
         
@@ -364,7 +382,7 @@ class WPHOp(torch.nn.Module):
         print(f"Nb of chunks: {self.nb_chunks}")
         
     def preconfigure(self, data, requires_grad=False,
-                     mem_chunk_factor=20, mem_chunk_factor_grad=40):
+                     mem_chunk_factor=25, mem_chunk_factor_grad=40):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -442,7 +460,120 @@ class WPHOp(torch.nn.Module):
         
         self.preconfigured = False
     
-    def _apply_chunk(self, data, chunk_id):
+    def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk):
+        """
+        Internal function for the normalization of WPH moments.
+        """
+        if norm == "auto": # Automatic normalization
+            # Compute or retrieve means
+            if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.wph_moments_indices.shape[0]:
+                mean1 = torch.mean(xpsi1_k1.detach(), (-1, -2), keepdim=True)
+                mean2 = torch.mean(xpsi2_k2.detach(), (-1, -2), keepdim=True)
+                means = torch.stack((mean1, mean2), dim=-1)
+                if self.norm_wph_means is None:
+                    self.norm_wph_means = means
+                else:
+                    self.norm_wph_means = torch.cat((self.norm_wph_means, means), dim=-4)
+            else:
+                mean1 = self.norm_wph_means[..., cov_chunk, :, :, 0] # (..., P, 1, 1)
+                mean2 = self.norm_wph_means[..., cov_chunk, :, :, 1] # (..., P, 1, 1)
+            
+            # Substract the means
+            xpsi1_k1 -= mean1.to(xpsi1_k1.dtype) # Consistent dtype needed
+            xpsi2_k2 -= mean2.to(xpsi2_k2.dtype) # Consistent dtype needed
+            
+            # Compute or retrieve (approximate) stds
+            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.wph_moments_indices.shape[0]:
+                std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                stds = torch.stack((std1, std2), dim=-1)
+                if self.norm_wph_stds is None:
+                    self.norm_wph_stds = stds
+                else:
+                    self.norm_wph_stds = torch.cat((self.norm_wph_stds, stds), dim=-4)
+            else:
+                std1 = self.norm_wph_stds[..., cov_chunk, :, :, 0]
+                std2 = self.norm_wph_stds[..., cov_chunk, :, :, 1]
+            
+            # Divide by the (approximate) std
+            xpsi1_k1 /= std1
+            xpsi2_k2 /= std2
+        else: # No normalization
+            # Substract the mean
+            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+        return xpsi1_k1, xpsi2_k2
+    
+    def _sm_normalization_1(self, data_new, norm):
+        """
+        Internal function for the normalization of the scaling moments.
+        """
+        if norm == "auto": # Automatic normalization
+            # Compute or retrieve means
+            if self.norm_sm_means_1 is None:
+                mean = torch.mean(data_new.detach(), (-1, -2), keepdim=True)
+                self.norm_sm_means_1 = mean
+            else:
+                mean = self.norm_sm_means_1
+            # Substract the mean
+            data_new -= mean
+        else: # No normalization
+            # Substract the mean
+            data_new -= torch.mean(data_new, (-1, -2), keepdim=True)
+            
+        return data_new
+    
+    def _sm_normalization_2(self, data_st_p, norm, cov_chunk):
+        """
+        Internal function for the normalization of the scaling moments.
+        """
+        if norm == "auto": # Automatic normalization
+            # Compute or retrieve means
+            if self.norm_sm_means_2 is None or self.norm_sm_means_2.shape[-3] != self.scaling_moments_indices.shape[0]:
+                mean = torch.mean(data_st_p.detach(), (-1, -2), keepdim=True)
+                if self.norm_sm_means_2 is None:
+                    self.norm_sm_means_2 = mean
+                else:
+                    self.norm_sm_means_2 = torch.cat((self.norm_sm_means_2, mean), dim=-3)
+            else:
+                mean = self.norm_sm_means_2[..., cov_chunk, :, :]
+                
+            # Substract the mean
+            data_st_p -= mean
+            
+            # Compute or retrieve (approximate) stds
+            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-3] != self.scaling_moments_indices.shape[0]:
+                std = torch.sqrt(torch.mean(torch.abs(data_st_p.detach()) ** 2, (-1, -2), keepdim=True))
+                if self.norm_sm_stds is None:
+                    self.norm_sm_stds = std
+                else:
+                    self.norm_sm_stds = torch.cat((self.norm_sm_stds, std), dim=-3)
+            else:
+                std = self.norm_sm_stds[..., cov_chunk, :, :]
+            
+            # Divide by the (approximate) std
+            data_st_p /= std
+        else: # No normalization
+            # Substract the mean
+            data_st_p -= torch.mean(data_st_p, (-1, -2), keepdim=True) # (..., ?, P, M, N)
+            
+        return data_st_p
+    
+    def clear_normalization(self):
+        """
+        Clear saved data for normalization of the coefficients.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.norm_wph_means = None
+        self.norm_wph_stds = None
+        self.norm_sm_means = None
+        self.norm_sm_stds = None
+    
+    def _apply_chunk(self, data, chunk_id, norm):
         """
         Internal function. Use apply instead.
         """
@@ -506,9 +637,8 @@ class WPHOp(torch.nn.Module):
             # Take the complex conjugate of xpsi2_k2
             xpsi2_k2 = torch.conj(xpsi2_k2)
             
-            # Substract the mean
-            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
-            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+            # Normalization
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
             
             # Compute covariance
             cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
@@ -531,7 +661,7 @@ class WPHOp(torch.nn.Module):
                 data_new = data.clone().unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, M, N)
                 
             # Subtract the mean to avoid a bias due to a non-zero mean of the signal
-            data_new -= torch.mean(data_new, (-1, -2), keepdim=True)
+            data_new = self._sm_normalization_1(data_new, norm)
             
             # Convolution with scaling functions
             data_f = fft(data_new)
@@ -544,8 +674,8 @@ class WPHOp(torch.nn.Module):
             data_st_p = power_harmonics(data_st, cov_indices[:, 1])
             del data_st
             
-            # Substract mean
-            data_st_p -= torch.mean(data_st_p, (-1, -2), keepdim=True) # (..., ?, P, M, N)
+            # Normalization
+            data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
             
             # Compute covariance
             data_st_p = torch.abs(data_st_p)
@@ -556,7 +686,7 @@ class WPHOp(torch.nn.Module):
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -584,13 +714,13 @@ class WPHOp(torch.nn.Module):
             data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
             coeffs = []
             for i in range(self.nb_chunks):
-                cov = self._apply_chunk(data, i)
+                cov = self._apply_chunk(data, i, norm)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
         else: # Compute selected chunk
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
-            coeffs = self._apply_chunk(data, chunk_id)
+            coeffs = self._apply_chunk(data, chunk_id, norm)
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
@@ -598,8 +728,8 @@ class WPHOp(torch.nn.Module):
         
         return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None):
         """
         Alias of apply.
         """
-        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad)
+        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm)

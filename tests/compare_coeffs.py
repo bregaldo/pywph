@@ -16,8 +16,9 @@ J = 8
 L = 8
 dn = 0
 cplx = True
+norm = "auto"
 
-data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
+data = fits.open('data/I_2.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
 data = torch.from_numpy(data + 1j*data/2)
 data=data[:M, :N]
 # data.requires_grad = True
@@ -31,7 +32,7 @@ start = time.time()
 data_torch, nb_chunks = wph_op.preconfigure(data)
 coeffs = []
 for i in range(nb_chunks):
-    coeffs.append(wph_op.apply(data_torch, i).detach())
+    coeffs.append(wph_op.apply(data_torch, i, norm=norm).detach())
 coeffs = torch.cat(coeffs, -1)
 b = coeffs
 print(time.time() - start)
@@ -46,7 +47,7 @@ print(time.time() - start)
 os.chdir('/home/bruno/Bureau/These ENS/Outils/pywph/pywph/tests/')
 
 start = time.time()
-a = wph_op_old.apply(data)
+a = wph_op_old.apply(data, norm=norm)
 print(time.time() - start)
 wph_op_old.stat_op.cpu()
 

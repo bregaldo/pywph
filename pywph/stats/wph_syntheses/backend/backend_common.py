@@ -155,15 +155,15 @@ class DivInitStd(object):
                 else:
                     sqrt_d = torch.pow(nbr_of_coeff*input.shape[0], 0.5).unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             else:
-                sqrt_d = np.sqrt(input.shape[-2] * input.shape[-3] * input.shape[0])
+                sqrt_d = np.sqrt(input.shape[-2] * input.shape[-3])
             stdinput = torch.norm(stdinput, dim=-1, keepdim=True)
             if self.is_isotropic:
                 stdinput = torch.norm(stdinput, dim=(-2, -3), keepdim=True)
                 stdinput = torch.norm(stdinput, dim=1, keepdim=True)
-                stdinput = torch.norm(stdinput, dim=0, keepdim=True)
+                #stdinput = torch.norm(stdinput, dim=0, keepdim=True)
             else:
                 stdinput = torch.norm(stdinput, dim=(-2, -3), keepdim=True)
-                stdinput = torch.norm(stdinput, dim=0, keepdim=True)
+                #stdinput = torch.norm(stdinput, dim=0, keepdim=True)
             self.stdinput = (stdinput + self.eps) / sqrt_d
 
         return input/self.stdinput

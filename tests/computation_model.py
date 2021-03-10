@@ -18,6 +18,7 @@ J = 8
 L = 8
 dn = 0
 cplx = True
+norm = "auto"
 
 data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
 #data = data+1j*data
@@ -61,7 +62,7 @@ start = time.time()
 data, nb_chunks = wph_op.preconfigure(data)
 for i in range(nb_chunks):
     print(i)
-    coeffs = wph_op.apply(data, i)
+    coeffs = wph_op.apply(data, i, norm=norm)
     loss = (torch.abs(coeffs) ** 2).mean()
     loss.backward(retain_graph=True)
     coeffs = None
