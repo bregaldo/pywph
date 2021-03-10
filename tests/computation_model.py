@@ -28,9 +28,9 @@ wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=cplx)
 wph_op.to(0)
 print(time.time() - start)
 
-# # Method 1
+# Method 1
 # start = time.time()
-# a = wph_op.apply(data)
+# coeffs = wph_op.apply(data)
 # print(time.time() - start)
 
 # # Method 1 bis

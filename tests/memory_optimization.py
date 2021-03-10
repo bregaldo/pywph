@@ -11,15 +11,15 @@ import torch
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
-M, N = 256, 256
-J = 6
-L = 4
+M, N = 512, 512
+J = 8
+L = 8
 dn = 0
 cplx = True
 
 data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
 data = data[:M, :N]
-data.requires_grad = True
+data.requires_grad = False
 
 start = time.time()
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=cplx)
@@ -40,3 +40,4 @@ for mem_chunk_factor in range(20, 100, 5):
     print(ell_time)
     res_record.append([mem_chunk_factor, ell_time])
 res_record = np.array(res_record)
+wph_op.to("cpu")

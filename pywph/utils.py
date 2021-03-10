@@ -129,6 +129,8 @@ def get_memory_available(device):
     if device == "cpu":
         return psutil.virtual_memory().available
     else:
+        if isinstance(device, torch.device):
+            device = device.index
         t = torch.cuda.get_device_properties(device).total_memory
         a = get_gpu_memory_map()[device]
         return t - (a - (torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device))  // (1024 ** 2)) * 1024 ** 2

@@ -11,15 +11,15 @@ import torch
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
-M, N = 256, 256
-J = 5
+M, N = 512, 512
+J = 8
 L = 8
-dn = 2
+dn = 0
 cplx = True
 
 data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
 data = torch.from_numpy(data + 1j*data/2)
-data=data[:256, :256]
+data=data[:M, :N]
 # data.requires_grad = True
 
 start = time.time()
@@ -28,7 +28,7 @@ print(time.time() - start)
 
 wph_op.to(0)
 start = time.time()
-data_torch, nb_chunks = wph_op.preconfigure(data, mem_chunk_factor=20)
+data_torch, nb_chunks = wph_op.preconfigure(data)
 coeffs = []
 for i in range(nb_chunks):
     coeffs.append(wph_op.apply(data_torch, i).detach())
