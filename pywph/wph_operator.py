@@ -320,6 +320,10 @@ class WPHOp(torch.nn.Module):
             self._phi_indices.append(elt[0] - max(self.j_min, 2))
         self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
         self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device)
+        
+        # Useful variables
+        self.nb_wph_moments = self.wph_moments_indices.shape[0]
+        self.nb_scaling_moments = self.scaling_moments_indices.shape[0]
             
     def _prepare_computation(self, data_size, mem_avail, mem_chunk_factor):
         """
@@ -466,7 +470,7 @@ class WPHOp(torch.nn.Module):
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
-            if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.wph_moments_indices.shape[0]:
+            if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.nb_wph_moments: # If self.norm_wph_means is not complete
                 mean1 = torch.mean(xpsi1_k1.detach(), (-1, -2), keepdim=True)
                 mean2 = torch.mean(xpsi2_k2.detach(), (-1, -2), keepdim=True)
                 means = torch.stack((mean1, mean2), dim=-1)
@@ -483,7 +487,7 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2 -= mean2.to(xpsi2_k2.dtype) # Consistent dtype needed
             
             # Compute or retrieve (approximate) stds
-            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.wph_moments_indices.shape[0]:
+            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_moments:  # If self.norm_wph_stds is not complete
                 std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
                 std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
                 stds = torch.stack((std1, std2), dim=-1)
@@ -529,7 +533,7 @@ class WPHOp(torch.nn.Module):
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
-            if self.norm_sm_means_2 is None or self.norm_sm_means_2.shape[-3] != self.scaling_moments_indices.shape[0]:
+            if self.norm_sm_means_2 is None or self.norm_sm_means_2.shape[-3] != self.nb_scaling_moments: # If self.norm_sm_means_2 is not complete
                 mean = torch.mean(data_st_p.detach(), (-1, -2), keepdim=True)
                 if self.norm_sm_means_2 is None:
                     self.norm_sm_means_2 = mean
@@ -542,7 +546,7 @@ class WPHOp(torch.nn.Module):
             data_st_p -= mean
             
             # Compute or retrieve (approximate) stds
-            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-3] != self.scaling_moments_indices.shape[0]:
+            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-3] != self.nb_scaling_moments: # If self.norm_sm_stds is not complete
                 std = torch.sqrt(torch.mean(torch.abs(data_st_p.detach()) ** 2, (-1, -2), keepdim=True))
                 if self.norm_sm_stds is None:
                     self.norm_sm_stds = std
@@ -573,7 +577,7 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means = None
         self.norm_sm_stds = None
     
-    def _apply_chunk(self, data, chunk_id, norm):
+    def _apply_chunk(self, data, chunk_id, norm, ret_indices):
         """
         Internal function. Use apply instead.
         """
@@ -643,7 +647,11 @@ class WPHOp(torch.nn.Module):
             # Compute covariance
             cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
             del xpsi1_k1, xpsi2_k2
-            return cov
+            
+            if ret_indices:
+                return cov, cov_chunk
+            else:
+                return cov
         elif chunk_id < self.final_chunk_id_per_class[4]: # Scaling moments
             cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
@@ -652,12 +660,14 @@ class WPHOp(torch.nn.Module):
         
             # Separate real and imaginary parts of input data if complex data
             if torch.is_complex(data):
+                cplx = True
                 data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
                                        dtype=data.dtype, device=data.device) # (...,2, M, N)
                 data_new[..., 0, :, :] = data.real
                 data_new[..., 1, :, :] = data.imag
                 data_new = data_new.unsqueeze(-3) # (..., 2, 1, M, N)
             else:
+                cplx = False
                 data_new = data.clone().unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, M, N)
                 
             # Subtract the mean to avoid a bias due to a non-zero mean of the signal
@@ -682,11 +692,20 @@ class WPHOp(torch.nn.Module):
             cov = torch.mean(data_st_p * data_st_p, (-1, -2))
             cov = cov.view(cov.shape[:-2] + (cov.shape[-2]*cov.shape[-1],)) # (..., ?*P)
             del data_st_p
-            return cov
+            
+            if ret_indices:
+                # For scaling moments, shift cov_chunk by the number of WPH moments
+                # There are subtleties related to the doubling of coefficients when applying to complex data
+                cov_chunk_shifted_1 = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
+                cov_chunk_shifted_2 = cov_chunk_shifted_1 + len(cov_chunk)
+                cov_chunk_shifted = torch.cat([cov_chunk_shifted_1, cov_chunk_shifted_2])
+                return cov, cov_chunk_shifted
+            else:
+                return cov
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -703,6 +722,9 @@ class WPHOp(torch.nn.Module):
             Id of the chunk of WPH coefficients. The default is None.
         requires_grad : bool, optional
             If data.requires_grad is False, turn it to True. The default is False.
+        ret_indices : bool, optional
+            When computing a specific chunk of coefficients, return the corresponding array 
+            of indices of the coefficients. The default is False.
 
         Returns
         -------
@@ -717,19 +739,28 @@ class WPHOp(torch.nn.Module):
                 cov = self._apply_chunk(data, i, norm)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
+            if ret_indices:
+                indices = torch.arange(coeffs.shape[-1])
         else: # Compute selected chunk
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
-            coeffs = self._apply_chunk(data, chunk_id, norm)
+            ret = self._apply_chunk(data, chunk_id, norm, ret_indices)
+            if ret_indices:
+                coeffs, indices = ret
+            else:
+                coeffs = ret
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
             self.free()
         
-        return coeffs
+        if ret_indices:
+            return coeffs, indices
+        else:
+            return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False):
         """
         Alias of apply.
         """
-        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm)
+        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=False)
