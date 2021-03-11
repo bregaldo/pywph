@@ -29,7 +29,7 @@ class WPHOp(torch.nn.Module):
     Wavelet Phase Harmonic (WPH) operator.
     """
     
-    def __init__(self, M, N, J, L=8, cplx=False,
+    def __init__(self, M, N, J, L=8, cplx=True,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
                  j_min=0, dn=0, alpha_list=[-np.pi/4, 0.0, np.pi/4, np.pi/2],
                  precision="single", device="cpu"):
