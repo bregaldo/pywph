@@ -81,6 +81,10 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means_2 = None
         self.norm_sm_stds = None
         
+        # Padding parameters (in 2^J unit)
+        self.padding_x_param = 1 / 2 # corresponds to a padding of 2^(J-1)
+        self.padding_y_param = 1 / 2 # corresponds to a padding of 2^(J-1)
+        
     def to(self, device):
         """
         Move the data (filters, etc) to the specified device (GPU or CPU).
@@ -577,10 +581,21 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means = None
         self.norm_sm_stds = None
     
-    def _apply_chunk(self, data, chunk_id, norm, ret_indices):
+    def _padding(self, data):
+        """
+            Internal function for padding.
+        """
+        padding_x = self.padding_x_param * 2 ** self.J
+        padding_y = self.padding_y_param * 2 ** self.J
+        if 2 * padding_y >= self.M or 2 * padding_x >= self.N:
+            raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
+        return data[..., padding_y:-padding_y, padding_x:-padding_x]
+    
+    def _apply_chunk(self, data, chunk_id, norm, ret_indices, padding):
         """
         Internal function. Use apply instead.
         """
+        # Computation of the chunk of coefficients
         if chunk_id < self.nb_chunks_wph: # WPH moments:
             cov_chunk = self.wph_moments_chunk_list[chunk_id]
             cov_indices = self.wph_moments_indices[cov_chunk]
@@ -621,25 +636,30 @@ class WPHOp(torch.nn.Module):
                     raise Exception(f"Invalid p value: {p}!")
             
             if chunk_id < self.final_chunk_id_per_class[0]: # S11 moments
-                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 1)
-                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1)
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 1) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1) # (..., P, M, N)
             elif chunk_id < self.final_chunk_id_per_class[1]: # S00 moments
-                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0)
-                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 0)
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 0) # (..., P, M, N)
             elif chunk_id < self.final_chunk_id_per_class[2]: # S01/C01 moments
-                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0)
-                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1)
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1) # (..., P, M, N)
             elif chunk_id < self.final_chunk_id_per_class[3]: # Other moments
                 # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
-                xpsi1 = get_precomputed_data(curr_psi_1_indices, 1)
-                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2])
+                xpsi1 = get_precomputed_data(curr_psi_1_indices, 1) # (..., P, M, N)
+                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
                 del xpsi1
-                xpsi2 = get_precomputed_data(curr_psi_2_indices, 1)
-                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5])
+                xpsi2 = get_precomputed_data(curr_psi_2_indices, 1) # (..., P, M, N)
+                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5]) # (..., P, M, N)
                 del xpsi2
                 
             # Take the complex conjugate of xpsi2_k2
             xpsi2_k2 = torch.conj(xpsi2_k2)
+            
+            # Potential padding
+            if padding:
+                xpsi1_k1 = self._padding(xpsi1_k1)
+                xpsi2_k2 = self._padding(xpsi2_k2)
             
             # Normalization
             xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
@@ -684,6 +704,10 @@ class WPHOp(torch.nn.Module):
             data_st_p = power_harmonics(data_st, cov_indices[:, 1])
             del data_st
             
+            # Potential padding
+            if padding:
+                data_st_p = self._padding(data_st_p)
+            
             # Normalization
             data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
             
@@ -696,16 +720,16 @@ class WPHOp(torch.nn.Module):
             if ret_indices:
                 # For scaling moments, shift cov_chunk by the number of WPH moments
                 # There are subtleties related to the doubling of coefficients when applying to complex data
-                cov_chunk_shifted_1 = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
-                cov_chunk_shifted_2 = cov_chunk_shifted_1 + len(cov_chunk)
-                cov_chunk_shifted = torch.cat([cov_chunk_shifted_1, cov_chunk_shifted_2])
+                cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
+                if cplx:
+                    cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
                 return cov, cov_chunk_shifted
             else:
                 return cov
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -725,6 +749,10 @@ class WPHOp(torch.nn.Module):
         ret_indices : bool, optional
             When computing a specific chunk of coefficients, return the corresponding array 
             of indices of the coefficients. The default is False.
+        padding : bool, optional
+            Crop border of transformed input data before any pixel average.
+            For data with non-periodic boundary conditions, set it to True.
+            The default is False.
 
         Returns
         -------
@@ -736,7 +764,7 @@ class WPHOp(torch.nn.Module):
             data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
             coeffs = []
             for i in range(self.nb_chunks):
-                cov = self._apply_chunk(data, i, norm, ret_indices)
+                cov = self._apply_chunk(data, i, norm, ret_indices, padding)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
             if ret_indices:
@@ -744,7 +772,7 @@ class WPHOp(torch.nn.Module):
         else: # Compute selected chunk
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
-            ret = self._apply_chunk(data, chunk_id, norm, ret_indices)
+            ret = self._apply_chunk(data, chunk_id, norm, ret_indices, padding)
             if ret_indices:
                 coeffs, indices = ret
             else:
@@ -759,7 +787,7 @@ class WPHOp(torch.nn.Module):
         else:
             return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False):
         """
         Alias of apply.
         """

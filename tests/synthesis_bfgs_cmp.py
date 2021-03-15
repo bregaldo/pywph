@@ -37,12 +37,12 @@ start = time.time()
 coeffs = wph_op.apply(data, norm=norm)
 print(f"Done! (in {time.time() - start}s)")
 
-it = 0
+eval_cnt = 0
 
 
 def closure(x=None):
-    global it
-    print(f"Iteration : {it}")
+    global eval_cnt
+    print(f"Evaluation : {eval_cnt}")
     start = time.time()
     x_reshaped = x.reshape((M, N, 2)).astype(np.float32)
     x_curr = torch.from_numpy(x_reshaped[:, :, 0] + 1j*x_reshaped[:, :, 1])
@@ -58,7 +58,7 @@ def closure(x=None):
     x_grad[:, :, 0] = x_curr.grad.real.cpu().numpy()
     x_grad[:, :, 1] = x_curr.grad.imag.cpu().numpy()
     print(f"Loss: {loss_tot.item()} (computed in {time.time() - start}s)")
-    it += 1
+    eval_cnt += 1
     return loss_tot.item(), x_grad.ravel()
 
 total_start = time.time()
@@ -93,12 +93,12 @@ for chunk_id in range(wph_op_old.nb_chunks + 1):
     wph_chunks.append(wph_chunk)
 print(f"Done! (in {time.time() - start}s)")
 
-it = 0
+eval_cnt = 0
 
 
 def closure(x=None):
-    global it
-    print(f"Iteration : {it}")
+    global eval_cnt
+    print(f"Evaluation : {eval_cnt}")
     start = time.time()
     x_reshaped = x.reshape((M, N, 2)).astype(np.float32)
     x_curr = torch.from_numpy(x_reshaped).unsqueeze(0).to(0).requires_grad_(True)
@@ -111,7 +111,7 @@ def closure(x=None):
         del wph_chunk, loss
     x_grad = x_curr.grad.cpu().numpy().astype(np.float64)
     print(f"Loss: {loss_tot.item()} (computed in {time.time() - start}s)")
-    it += 1
+    eval_cnt += 1
     return loss_tot.item(), x_grad.ravel()
 
 

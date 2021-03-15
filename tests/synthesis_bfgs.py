@@ -24,7 +24,7 @@ norm = "auto"
 optim_params = {"maxiter": 50, "gtol": 1e-14, "ftol": 1e-14, "maxcor": 20}
 
 data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
-data = data[:M, :N] + 1j*data[:M, :N]
+data = data[:M, :N] + 1j*data[:M, :N]/2
 data /= data.std()
 
 start = time.time()
@@ -80,23 +80,25 @@ final_loss, x0, niter, msg = result['fun'], result['x'], result['nit'], result['
 
 np.save("test_synthesis.npy", x0)
 
-# sys.path.append("/home/bruno/Bureau/These ENS/Outils/misc/")
+sys.path.append("/home/bruno/Bureau/These ENS/Outils/misc/")
 
-# import misc
+import misc
 
-# best_img = x0.reshape((M, N, 2))[:, :, 0] + 1j*x0.reshape((M, N, 2))[:, :, 1]
+x0 = np.load('synthesis_tanguyscode.npy')
 
-# fig, ax = plt.subplots(1, 1)
-# bins = np.linspace(0, np.sqrt(2) * np.pi, 100)
-# bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(data, bins)
-# misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
-# bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(best_img, bins)
-# misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
-# plt.show()
+best_img = x0.reshape((M, N, 2))[:, :, 0] + 1j*x0.reshape((M, N, 2))[:, :, 1]
 
-# fig, axs = plt.subplots(2, 2, figsize=(10, 7))
-# misc.plot_img(fig, axs[0, 0], data.real, 'Original Q')
-# misc.plot_img(fig, axs[0, 1], data.imag, 'Original U')
-# misc.plot_img(fig, axs[1, 0], best_img.real, 'Synth Q')
-# misc.plot_img(fig, axs[1, 1], best_img.imag, 'Synth U')
-# plt.show()
+fig, ax = plt.subplots(1, 1)
+bins = np.linspace(0, np.sqrt(2) * np.pi, 100)
+bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(data, bins)
+misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
+bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(best_img, bins)
+misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
+plt.show()
+
+fig, axs = plt.subplots(2, 2, figsize=(10, 7))
+misc.plot_img(fig, axs[0, 0], data.real, 'Original Q')
+misc.plot_img(fig, axs[0, 1], data.imag, 'Original U')
+misc.plot_img(fig, axs[1, 0], best_img.real, 'Synth Q')
+misc.plot_img(fig, axs[1, 1], best_img.imag, 'Synth U')
+plt.show()
