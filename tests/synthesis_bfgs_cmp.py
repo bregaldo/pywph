@@ -61,11 +61,13 @@ def closure(x=None):
     it += 1
     return loss_tot.item(), x_grad.ravel()
 
+total_start = time.time()
 
 result = opt.minimize(closure, x0.ravel(), method='L-BFGS-B', jac=True, tol=None, options=optim_params)
 final_loss, x_final, niter, msg = result['fun'], result['x'], result['nit'], result['message']
 
 print(f"Synthesis ended in {niter} iterations with optimizer message: {msg}")
+print(f"Synthesis time: {time.time() - total_start}s")
 
 np.save("synthesis_pywph.npy", x_final)
 wph_op.to("cpu") # To free GPU memory
@@ -81,15 +83,13 @@ wph_op_old = pw.WPHOp_old(M, N, stat_params)
 os.chdir('../tests/')
 print(f"Done! (in {time.time() - start}s)")
 
-data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
-data = wph_op_old._to_torch(np.expand_dims(data, axis=0))
-data.requires_grad = True
+data_torch = torch.from_numpy(np.stack((data.real, data.imag), axis=-1))
 
 print("Computing stats of target image...")
 start = time.time()
 wph_chunks = []
 for chunk_id in range(wph_op_old.nb_chunks + 1):
-    wph_chunk = wph_op_old.stat_op(data, chunk_id, norm=norm)
+    wph_chunk = wph_op_old.stat_op(data_torch, chunk_id, norm=norm)
     wph_chunks.append(wph_chunk)
     loss = (torch.abs(wph_chunk) ** 2).mean()
     loss.backward()
