@@ -83,7 +83,7 @@ wph_op_old = pw.WPHOp_old(M, N, stat_params)
 os.chdir('../tests/')
 print(f"Done! (in {time.time() - start}s)")
 
-data_torch = torch.from_numpy(np.stack((data.real, data.imag), axis=-1))
+data_torch = torch.from_numpy(np.stack((data.real, data.imag), axis=-1)).unsqueeze(0)
 
 print("Computing stats of target image...")
 start = time.time()
@@ -102,7 +102,7 @@ def closure(x=None):
     print(f"Iteration : {it}")
     start = time.time()
     x_reshaped = x.reshape((M, N, 2)).astype(np.float32)
-    x_curr = torch.from_numpy(x_reshaped).requires_grad_(True)
+    x_curr = torch.from_numpy(x_reshaped).unsqueeze(0).requires_grad_(True)
     loss_tot = torch.zeros(1)
     for chunk_id in range(wph_op_old.nb_chunks + 1):
         wph_chunk = wph_op_old.stat_op(x_curr, chunk_id, norm=norm)
