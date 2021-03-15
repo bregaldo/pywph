@@ -34,13 +34,13 @@ for i in range(nb_chunks):
 print(time.time() - start)
 wph_op.to("cpu")
 
-os.chdir('/home/bruno/Bureau/These ENS/Outils/pywph/pywph/pywph/')
+os.chdir('../pywph/')
 start = time.time()
 stat_params = {"J": 8, "L": 8, "delta_j": 7, "delta_l": 4, "delta_n": 0,
                "scaling_function_moments": [0, 1, 2, 3], "nb_chunks": 60}
 wph_op_old = pw.WPHOp_old(N, N, stat_params)
 print(time.time() - start)
-os.chdir('/home/bruno/Bureau/These ENS/Outils/pywph/pywph/tests/')
+os.chdir('../tests/')
 
 data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
 data = wph_op_old._to_torch(np.expand_dims(data, axis=0))

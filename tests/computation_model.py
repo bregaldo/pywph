@@ -36,7 +36,7 @@ print(time.time() - start)
 
 # # Method 1 bis
 # start = time.time()
-# data, nb_chunks = wph_op.preconfigure(data, mem_chunk_factor=20)
+# data, nb_chunks = wph_op.preconfigure(data)
 # coeffs = []
 # for i in range(nb_chunks):
 #     coeffs.append(wph_op.apply(data, i).detach())
