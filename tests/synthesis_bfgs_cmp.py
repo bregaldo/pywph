@@ -107,9 +107,7 @@ def closure(x=None):
         loss.backward()
         loss_tot += loss.detach().cpu()
         del wph_chunk, loss
-    x_grad = np.zeros_like(x.reshape((M, N, 2)))
-    x_grad[:, :, 0] = x_curr.grad.real.cpu().numpy()
-    x_grad[:, :, 1] = x_curr.grad.imag.cpu().numpy()
+    x_grad = x_curr.grad.cpu().numpy().astype(np.float64)
     print(f"Loss: {loss_tot.item()} (computed in {time.time() - start}s)")
     it += 1
     return loss_tot.item(), x_grad.ravel()
