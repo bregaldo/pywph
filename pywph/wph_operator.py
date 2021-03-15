@@ -429,7 +429,7 @@ class WPHOp(torch.nn.Module):
         
         # Precompute the wavelet transform if we have enough memory
         if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
-            print("Enough memory to store the wavelet transform of input data.")
+            #print("Enough memory to store the wavelet transform of input data.")
             data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
             data_wt_f = data_f * self.psi_f
             del data_f
@@ -440,7 +440,7 @@ class WPHOp(torch.nn.Module):
         
         # Precompute the modulus of the wavelet transform if we have enough memory
         if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
-            print("Enough memory to store the modulus of the wavelet transform of input data.")
+            #print("Enough memory to store the modulus of the wavelet transform of input data.")
             self._tmp_data_wt_mod = torch.abs(self._tmp_data_wt) # We keep this variable in memory
             mem_avail -= data_size * self.psi_f.shape[0]
         

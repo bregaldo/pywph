@@ -10,18 +10,18 @@ import sys
 import multiprocessing as mp
 from functools import partial
 
-M, N = 256, 256
-J = 5
+M, N = 512, 512
+J = 8
 L = 8
-dn = 0
+dn = 2
 norm = "auto"
 
 optim_params = {"maxiter": 10, "gtol": 1e-14, "ftol": 1e-14, "maxcor": 20}
 
-devices = [0]
+devices = [0, 1]
 
-SNR = 1000.0
-Mn = 10 # Number of noises per iteration
+SNR = 1.0
+Mn = 100 # Number of noises per iteration
 
 
 def closure_per_gpu(x_curr, noises, coeffs, wph_op, work_list, device_id):
