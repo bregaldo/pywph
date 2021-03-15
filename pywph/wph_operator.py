@@ -736,7 +736,7 @@ class WPHOp(torch.nn.Module):
             data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
             coeffs = []
             for i in range(self.nb_chunks):
-                cov = self._apply_chunk(data, i, norm)
+                cov = self._apply_chunk(data, i, norm, ret_indices)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
             if ret_indices:
