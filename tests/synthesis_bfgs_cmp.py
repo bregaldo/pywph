@@ -14,7 +14,7 @@ L = 8
 dn = 2
 norm = "auto"
 
-optim_params = {"maxiter": 50, "gtol": 1e-14, "ftol": 1e-14, "maxcor": 20}
+optim_params = {"maxiter": 2, "gtol": 1e-14, "ftol": 1e-14, "maxcor": 20}
 
 data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
 data = data[:M, :N] + 1j*data[:M, :N]/2
@@ -91,8 +91,6 @@ wph_chunks = []
 for chunk_id in range(wph_op_old.nb_chunks + 1):
     wph_chunk = wph_op_old.stat_op(data_torch, chunk_id, norm=norm)
     wph_chunks.append(wph_chunk)
-    loss = (torch.abs(wph_chunk) ** 2).mean()
-    loss.backward()
 print(f"Done! (in {time.time() - start}s)")
 
 
