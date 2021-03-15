@@ -46,7 +46,6 @@ def closure_per_gpu(x_curr, noises, coeffs, wph_op, work_list, device_id):
     grad_tot = u.grad.cpu().numpy()
     
     del n, u # To free GPU memory
-    grad_tot = 0.
     
     return loss_tot.item(), grad_tot
 
@@ -92,19 +91,12 @@ if __name__ == "__main__":
     print("Building operators...")
     start = time.time()
     wph_op = pw.WPHOp(M, N, J, L=L, dn=dn)
-    # wph_ops = [wph_op]
-    # for device in devices[1:]:
-    #     print(f"Send operator to device={device}.")
-    #     wph_ops.append(copy.deepcopy(wph_op).to(device))
-    # wph_ops[0].to(devices[0]) # Now we can send the first object to its device
     wph_op.to(0)
     print(f"Done! (in {time.time() - start}s)")
     
     print("Computing stats of target image...")
     start = time.time()
-    # for wph_op in wph_ops: # Do that multiple times for the normalization
-    #     coeffs = wph_op.apply(d, norm=norm)
-    coeffs = wph_op.apply(d, norm=norm)
+    coeffs = wph_op.apply(d, norm=norm).to("cpu")
     wph_op.to("cpu")
     print(f"Done! (in {time.time() - start}s)")
     
