@@ -8,6 +8,7 @@ from functools import partial
 
 from .filters import GaussianFilter, BumpSteerableWavelet
 from .utils import to_torch, get_memory_available, fft, ifft, phase_harmonics, power_harmonics
+from .wph import WPH
 
 
 # Internal function for the parallel pre-building of the bandpass filters (see WPHOp.load_filters)
@@ -96,7 +97,7 @@ class WPHOp(torch.nn.Module):
 
         Returns
         -------
-        None.
+        self
 
         """
         if device != "cpu" and not torch.cuda.is_available():
@@ -123,6 +124,7 @@ class WPHOp(torch.nn.Module):
                 self.norm_sm_stds = self.norm_sm_stds.to(device)
             
             self.device = device
+        return self
         
     def load_filters(self, lp_filter_cls, bp_filter_cls):
         """
@@ -591,7 +593,7 @@ class WPHOp(torch.nn.Module):
             raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
         return data[..., padding_y:-padding_y, padding_x:-padding_x]
     
-    def _apply_chunk(self, data, chunk_id, norm, ret_indices, padding):
+    def _apply_chunk(self, data, chunk_id, norm, padding):
         """
         Internal function. Use apply instead.
         """
@@ -668,10 +670,7 @@ class WPHOp(torch.nn.Module):
             cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
             del xpsi1_k1, xpsi2_k2
             
-            if ret_indices:
-                return cov, cov_chunk
-            else:
-                return cov
+            return cov, cov_chunk
         elif chunk_id < self.final_chunk_id_per_class[4]: # Scaling moments
             cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
@@ -717,19 +716,16 @@ class WPHOp(torch.nn.Module):
             cov = cov.view(cov.shape[:-2] + (cov.shape[-2]*cov.shape[-1],)) # (..., ?*P)
             del data_st_p
             
-            if ret_indices:
-                # For scaling moments, shift cov_chunk by the number of WPH moments
-                # There are subtleties related to the doubling of coefficients when applying to complex data
-                cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
-                if cplx:
-                    cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
-                return cov, cov_chunk_shifted
-            else:
-                return cov
+            # For scaling moments, shift cov_chunk by the number of WPH moments
+            # There are subtleties related to the doubling of coefficients when applying to complex data
+            cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
+            if cplx:
+                cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
+            return cov, cov_chunk_shifted
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -747,12 +743,14 @@ class WPHOp(torch.nn.Module):
         requires_grad : bool, optional
             If data.requires_grad is False, turn it to True. The default is False.
         ret_indices : bool, optional
-            When computing a specific chunk of coefficients, return the corresponding array 
+            When computing a specific chunk of coefficients, return the corresponding array
             of indices of the coefficients. The default is False.
         padding : bool, optional
             Crop border of transformed input data before any pixel average.
             For data with non-periodic boundary conditions, set it to True.
             The default is False.
+        ret_wph_obj : bool, optional
+            Return a WPH object if needed. The default is False.
 
         Returns
         -------
@@ -764,31 +762,36 @@ class WPHOp(torch.nn.Module):
             data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
             coeffs = []
             for i in range(self.nb_chunks):
-                cov = self._apply_chunk(data, i, norm, ret_indices, padding)
+                cov, _ = self._apply_chunk(data, i, norm, padding)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
-            if ret_indices:
-                indices = torch.arange(coeffs.shape[-1])
+            indices = torch.arange(coeffs.shape[-1])
         else: # Compute selected chunk
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
-            ret = self._apply_chunk(data, chunk_id, norm, ret_indices, padding)
-            if ret_indices:
-                coeffs, indices = ret
-            else:
-                coeffs = ret
+            coeffs, indices = self._apply_chunk(data, chunk_id, norm, padding)
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
             self.free()
-        
-        if ret_indices:
+            
+        if ret_wph_obj:
+            if chunk_id is None:
+                return WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L)
+            else:
+                if chunk_id < self.nb_wph_moments:
+                    cov_indices = self.wph_moments_indices[self.wph_moments_chunk_list[chunk_id]]
+                    return WPH(coeffs, cov_indices, J=self.J, L=self.L)
+                else:
+                    cov_indices = self.scaling_moments_indices[self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]]
+                return WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L)
+        elif ret_indices:
             return coeffs, indices
         else:
             return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False):
         """
         Alias of apply.
         """
-        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=False)
+        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, ret_wph_obj=ret_wph_obj)

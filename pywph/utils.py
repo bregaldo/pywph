@@ -91,6 +91,37 @@ def to_torch(data, device=None, precision="single"):
     return ret.contiguous()
 
 
+def to_numpy(data):
+    """
+    Converts input data into numpy arrays.
+    Accepted input types: list, np.ndarray, torch.tensor
+
+    Parameters
+    ----------
+    data : list, np.ndarray, torch.tensor
+        Input data.
+
+    Raises
+    ------
+    Exception
+        DESCRIPTION.
+
+    Returns
+    -------
+    np.ndarray
+        Numpy array version of input data.
+
+    """
+    if isinstance(data, list): # List
+        return np.array(data)
+    elif isinstance(data, np.ndarray): # Numpy array
+        return data
+    elif isinstance(data, torch.Tensor):
+        return data.detach().cpu().numpy()
+    else:
+        raise Exception("Unknown data type!")
+
+
 def get_gpu_memory_map():
     """
     Get the current gpu usage. (from mjstevens777)

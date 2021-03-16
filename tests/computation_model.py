@@ -30,9 +30,9 @@ wph_op.to(0)
 print(time.time() - start)
 
 # Method 1
-# start = time.time()
-# coeffs = wph_op.apply(data)
-# print(time.time() - start)
+start = time.time()
+coeffs = wph_op.apply(data)
+print(time.time() - start)
 
 # # Method 1 bis
 # start = time.time()

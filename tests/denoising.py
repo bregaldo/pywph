@@ -24,13 +24,14 @@ SNR = 1.0
 Mn = 100 # Number of noises per iteration
 
 
-def closure_per_gpu(x_curr, noises, coeffs, wph_op, work_list, device_id):
+def closure_per_gpu(x_curr, coeffs, wph_op, work_list, device_id):
     device = devices[device_id]
     wph_op.to(device)
     coeffs_target = coeffs.to(device_id)
     
     u = x_curr.clone().to(device).requires_grad_(True)
-    n = noises[work_list[device_id]].to(device)
+    n_id = work_list[device_id]
+    n = (torch.randn((len(n_id), M, N)) / SNR).to(device)
     
     loss_tot = torch.zeros(1)
     for i in range(n.shape[0]):
@@ -56,13 +57,12 @@ def closure(x=None):
     start = time.time()
     x_reshaped = x.reshape((M, N)).astype(np.float32)
     x_curr = torch.from_numpy(x_reshaped)
-    noises = torch.randn((Mn, M, N)) / SNR
     
     # Multi-gpu configuration
     nb_processes = len(devices)
     work_list = np.array_split(np.arange(Mn), nb_processes)
     pool = mp.get_context("spawn").Pool(processes=nb_processes) # "spawn" context demanded by CUDA
-    closure_per_gpu_loc = partial(closure_per_gpu, x_curr, noises, coeffs, wph_op, work_list)
+    closure_per_gpu_loc = partial(closure_per_gpu, x_curr, coeffs, wph_op, work_list)
     results = pool.map(closure_per_gpu_loc, range(nb_processes))
     
     # Get results and close pool
