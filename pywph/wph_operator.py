@@ -215,7 +215,7 @@ class WPHOp(torch.nn.Module):
 
         Parameters
         ----------
-        classes : list of str, optional
+        classes : str or list of str, optional
             Classes of WPH/scaling moments constituting the model. The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
         extra_wph_moments : list of lists of length 7, optional
             Format corresponds to [j1, theta1, p1, j2, theta2, p2, n]. The default is [].
@@ -236,15 +236,24 @@ class WPHOp(torch.nn.Module):
         """
         if cross_moments:
             print("Warning! cross_moments not implemented yet.")
+            
+        # Reordering of elements of classes
+        if isinstance(classes, str): # Convert to list of str
+            classes = [classes]
+        classes_new = []
+        for clas in ["S11", "S00", "S01", "C01", "Cphase", "L"]:
+            if clas in classes:
+                classes_new.append(clas)
+        classes = classes_new
         
         wph_indices = []
         sm_indices = []
         
-        # Moments end indices
-        self._moments_indices = [0, 0, 0, 0, 0] # End indices delimiting the classes of moments: S11, S00, S01/C01, Cphase/extra, L
+        # Moments and indices
+        self._moments_indices = np.array([0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00, S01/C01, Cphase/extra, L
     
-        cnt = 0
         for clas in classes:
+            cnt = 0
             if clas == "S11":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
@@ -252,7 +261,7 @@ class WPHOp(torch.nn.Module):
                         for n in range(dn_eff * len(self.alpha_list) + 1):
                             wph_indices.append([j1, t1, 1, j1, t1, 1, n])
                             cnt += 1
-                self._moments_indices[0] = cnt
+                self._moments_indices[0:] += cnt
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
@@ -260,12 +269,13 @@ class WPHOp(torch.nn.Module):
                         for n in range(dn_eff * len(self.alpha_list) + 1):
                             wph_indices.append([j1, t1, 0, j1, t1, 0, n])
                             cnt += 1
-                self._moments_indices[1] = cnt
+                self._moments_indices[1:] += cnt
             elif clas == "S01":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
                         wph_indices.append([j1, t1, 0, j1, t1, 1, 0])
                         cnt += 1
+                self._moments_indices[2:] += cnt
             elif clas == "C01":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, self.J):
@@ -279,7 +289,7 @@ class WPHOp(torch.nn.Module):
                                 else:
                                     wph_indices.append([j1, t1, 0, j2, t2 % (2 * self.L), 1, 0])
                                     cnt += 1
-                self._moments_indices[2] = cnt
+                self._moments_indices[2:] += cnt
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, self.J):
@@ -288,14 +298,14 @@ class WPHOp(torch.nn.Module):
                             for n in range(dn_eff * len(self.alpha_list) + 1):
                                 wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n])
                                 cnt += 1
-                self._moments_indices[3] = cnt
+                self._moments_indices[3:] += cnt
             elif clas == "L":
                 # Scaling moments
                 for j in range(max(self.j_min, 2), self.J - 1):
                     for p in range(4):
                         sm_indices.append([j, p])
                         cnt += 1
-                self._moments_indices[4] = cnt
+                self._moments_indices[4:] += cnt
             else:
                 raise Exception(f"Unknown class of moments: {clas}")
         

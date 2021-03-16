@@ -34,7 +34,6 @@ class WPH:
         None.
 
         """
-        print(coeffs.shape[-1], wph_coeffs_indices.shape[0], sm_coeffs_indices.shape[0])
         # Consistency check
         if coeffs.shape[-1] != wph_coeffs_indices.shape[0] + sm_coeffs_indices.shape[0] \
             and coeffs.shape[-1] != wph_coeffs_indices.shape[0] + 2 * sm_coeffs_indices.shape[0]:
@@ -47,15 +46,15 @@ class WPH:
             self.cplx = False
         
         # Convert and store coefficients
-        coeffs = to_numpy(coeffs)
+        coeffs = to_numpy(coeffs).copy()
         self.wph_coeffs = coeffs[..., :wph_coeffs_indices.shape[0]] # WPH moments estimates
         self.sm_coeffs = coeffs[..., wph_coeffs_indices.shape[0]:] # Scaling moments estimates
         if self.cplx:
             self.sm_coeffs = self.sm_coeffs.reshape((2, -1))
         
         # Store indices
-        self.wph_coeffs_indices = to_numpy(wph_coeffs_indices)
-        self.sm_coeffs_indices = to_numpy(sm_coeffs_indices)
+        self.wph_coeffs_indices = to_numpy(wph_coeffs_indices).copy()
+        self.sm_coeffs_indices = to_numpy(sm_coeffs_indices).copy()
         
         # Lexicographical reordering
         self.reorder()
@@ -80,20 +79,22 @@ class WPH:
 
         """
         # WPH coefficients
-        indices = np.lexsort(self.wph_coeffs_indices.T[::-1, :])
-        wph_coeffs_copy = self.wph_coeffs.copy()
-        wph_coeffs_indices_copy = self.wph_coeffs_indices.copy()
-        for i in range(self.wph_coeffs.shape[0]):
-            self.wph_coeffs[i] = wph_coeffs_copy[indices[i]]
-            self.wph_coeffs_indices[i] = wph_coeffs_indices_copy[indices[i]]
+        if self.wph_coeffs_indices.shape[0] != 0:
+            indices = np.lexsort(self.wph_coeffs_indices.T[::-1, :])
+            wph_coeffs_copy = self.wph_coeffs.copy()
+            wph_coeffs_indices_copy = self.wph_coeffs_indices.copy()
+            for i in range(self.wph_coeffs.shape[0]):
+                self.wph_coeffs[i] = wph_coeffs_copy[indices[i]]
+                self.wph_coeffs_indices[i] = wph_coeffs_indices_copy[indices[i]]
             
         # Scaling moments coefficients
-        indices = np.lexsort(self.sm_coeffs_indices.T[::-1, :])
-        sm_coeffs_copy = self.sm_coeffs.copy()
-        sm_coeffs_indices_copy = self.sm_coeffs_indices.copy()
-        for i in range(self.sm_coeffs.shape[0]):
-            self.sm_coeffs[i] = sm_coeffs_copy[indices[i]]
-            self.sm_coeffs_indices[i] = sm_coeffs_indices_copy[indices[i]]
+        if self.sm_coeffs_indices.shape[0] != 0:
+            indices = np.lexsort(self.sm_coeffs_indices.T[::-1, :])
+            sm_coeffs_copy = self.sm_coeffs.copy()
+            sm_coeffs_indices_copy = self.sm_coeffs_indices.copy()
+            for i in range(self.sm_coeffs.shape[0]):
+                self.sm_coeffs[i] = sm_coeffs_copy[indices[i]]
+                self.sm_coeffs_indices[i] = sm_coeffs_indices_copy[indices[i]]
             
     def _filter_args(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, sm=False):
         """
@@ -194,7 +195,7 @@ class WPH:
             Corresponding indices.
 
         """
-        filtering = self._filter_args(clas="", j=j, p=p, j1=j1, t1=t1, p1=p1, j2=j2, t2=t2, p2=p2, n=n, sm=sm)
+        filtering = self._filter_args(clas=clas, j=j, p=p, j1=j1, t1=t1, p1=p1, j2=j2, t2=t2, p2=p2, n=n, sm=sm)
         if sm or clas == "L":
             return self.sm_coeffs[..., filtering], self.sm_coeffs_indices[filtering, :]
         else:
