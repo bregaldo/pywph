@@ -21,14 +21,17 @@ data_torch.requires_grad = True
 
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
 
-# Compute the gradient of a final loss by accumulating the gradients of the chunks of the loss
+# Compute the coefficients and the gradient of a final loss by accumulating the gradients of the chunks of the loss
 data_torch, nb_chunks = wph_op.preconfigure(data_torch) # Divide the computation into chunks
+coeffs = []
 for i in range(nb_chunks):
     print(f"{i}/{nb_chunks}")
-    coeffs = wph_op(data_torch, i)
-    loss = (torch.absolute(coeffs) ** 2).sum()
-    loss.backward(retain_graph=True)
-    del coeffs, loss # To free GPU memory
+    coeffs_chunk = wph_op(data_torch, i)
+    loss_chunk = (torch.absolute(coeffs_chunk) ** 2).sum()
+    loss_chunk.backward(retain_graph=True)
+    coeffs.append(coeffs_chunk.detach().cpu())
+    del coeffs_chunk, loss_chunk # To free GPU memory
+coeffs = torch.cat(coeffs, -1)
 grad = data_torch.grad
 
 print(grad)
