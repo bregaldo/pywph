@@ -1,2 +1,5 @@
 numpy
+astropy
+matplotlib
+scipy
 pytorch>=1.8.0

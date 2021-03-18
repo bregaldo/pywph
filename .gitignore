@@ -4,3 +4,4 @@
 pywph/stats/bump_steerable_wavelet/filters/
 .spyproject/
 Notes
+tests/tmp.py
