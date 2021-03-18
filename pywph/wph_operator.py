@@ -804,4 +804,4 @@ class WPHOp(torch.nn.Module):
         """
         Alias of apply.
         """
-        self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, ret_wph_obj=ret_wph_obj)
+        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, ret_wph_obj=ret_wph_obj)

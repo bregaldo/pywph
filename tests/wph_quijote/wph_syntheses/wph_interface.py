@@ -6,8 +6,9 @@ import copy
 from pathlib import Path
 import os
 import torch
-from stats.wph_syntheses.wph_operator import PhaseHarmonics2d
-from stats.wph_syntheses.utils import periodic_dis
+
+from wph_quijote.wph_syntheses.wph_operator import PhaseHarmonics2d
+from wph_quijote.wph_syntheses.utils import periodic_dis
 
 
 class WPHOp:

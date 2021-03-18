@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import matplotlib.pyplot as plt
-import copy
-from pathlib import Path
-import os
 import torch
-import sys
 
-from .wph_old import WPH_old
-
-from .stats.wph_syntheses.wph_operator import PhaseHarmonics2d
+from .wph import WPH_quijote
+from .wph_operator import PhaseHarmonics2d
 
 
-class WPHOp_old:
+class WPHOp_quijote:
     
     def __init__(self, M, N, stat_params, device=0):
         self.stat_params = stat_params
@@ -64,4 +58,5 @@ class WPHOp_old:
                 wph_chunk = self.stat_op(data_torch, chunk_id, norm=norm)  # (nb,nc,nb_channels,1,1,2)
                 wph.append(wph_chunk)
                
-        return WPH_old(wph, self.stat_params, self.stat_op.wph_by_chunk)
+        return WPH_quijote(wph, self.stat_params, self.stat_op.wph_by_chunk)
+    

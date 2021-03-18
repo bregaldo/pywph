@@ -87,7 +87,7 @@ def compute_bank_of_wavelet(delta_theta_n, N, L, J, max_delta_n):
     # For large values of the parameters we may encouter the following error:
     # OverflowError: cannot serialize a bytes object larger than 4 GiB
     # To fix it, change in numpy format.py file, write_array function, pickle.dump(..., protocol=4, ...)
-    np.save(os.path.join('stats', 'bump_steerable_wavelet', 'filters', filename), result)
+    np.save(os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', filename), result)
 
 
 def create_bank_scaling_functions(N, J, L):
@@ -97,4 +97,4 @@ def create_bank_scaling_functions(N, J, L):
         fftphi = compute_hat_phi_j(j, N, sigma)
         list_hatphi.append(fftphi)
 
-    np.save(os.path.join('stats', 'bump_steerable_wavelet', 'filters', 'bump_scaling_functions_N_{N}_J_{J}.npy'.format(N=N, J=J)), np.array(list_hatphi))
+    np.save(os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_scaling_functions_N_{N}_J_{J}.npy'.format(N=N, J=J)), np.array(list_hatphi))

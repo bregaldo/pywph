@@ -50,7 +50,7 @@ class WPH:
         self.wph_coeffs = coeffs[..., :wph_coeffs_indices.shape[0]] # WPH moments estimates
         self.sm_coeffs = coeffs[..., wph_coeffs_indices.shape[0]:] # Scaling moments estimates
         if self.cplx:
-            self.sm_coeffs = self.sm_coeffs.reshape((2, -1))
+            self.sm_coeffs = self.sm_coeffs.reshape(self.sm_coeffs.shape[:-2] + (2, -1))
         
         # Store indices
         self.wph_coeffs_indices = to_numpy(wph_coeffs_indices).copy()
@@ -83,8 +83,8 @@ class WPH:
             indices = np.lexsort(self.wph_coeffs_indices.T[::-1, :])
             wph_coeffs_copy = self.wph_coeffs.copy()
             wph_coeffs_indices_copy = self.wph_coeffs_indices.copy()
-            for i in range(self.wph_coeffs.shape[0]):
-                self.wph_coeffs[i] = wph_coeffs_copy[indices[i]]
+            for i in range(self.wph_coeffs.shape[-1]):
+                self.wph_coeffs[..., i] = wph_coeffs_copy[..., indices[i]]
                 self.wph_coeffs_indices[i] = wph_coeffs_indices_copy[indices[i]]
             
         # Scaling moments coefficients
@@ -92,8 +92,8 @@ class WPH:
             indices = np.lexsort(self.sm_coeffs_indices.T[::-1, :])
             sm_coeffs_copy = self.sm_coeffs.copy()
             sm_coeffs_indices_copy = self.sm_coeffs_indices.copy()
-            for i in range(self.sm_coeffs.shape[0]):
-                self.sm_coeffs[i] = sm_coeffs_copy[indices[i]]
+            for i in range(self.sm_coeffs.shape[-1]):
+                self.sm_coeffs[..., i] = sm_coeffs_copy[..., indices[i]]
                 self.sm_coeffs_indices[i] = sm_coeffs_indices_copy[indices[i]]
             
     def _filter_args(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, sm=False):
@@ -225,10 +225,10 @@ class WPH:
             dt = periodic_distance(t1, t2, 2 * self.L)
             if (j1, 0, p1, j2, dt, p2, n) in indices_cnt.keys():
                 indices_cnt[(j1, 0, p1, j2, dt, p2, n)] += 1
-                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] += self.wph_coeffs[i]
+                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] += self.wph_coeffs[..., i]
             else:
                 indices_cnt[(j1, 0, p1, j2, dt, p2, n)] = 1
-                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] = self.wph_coeffs[i]
+                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] = self.wph_coeffs[..., i]
                 
         # Conversion into numpy arrays
         indices = []
@@ -237,7 +237,7 @@ class WPH:
             indices.append(key)
             wph_isopar_list.append(wph_isopar[key] / indices_cnt[key])
         indices = np.array(indices)
-        wph_isopar = np.array(wph_isopar_list)
+        wph_isopar = np.moveaxis(np.array(wph_isopar_list), 0, -1)
         
         # Reordering and save
         self.wph_coeffs_indices = indices
@@ -371,4 +371,3 @@ class WPH:
     
     def _plot(self, axis, clas):
         pass
-    

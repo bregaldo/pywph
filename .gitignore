@@ -1,7 +1,7 @@
 *.pyc
 *.pyo
 .DS_Store
-pywph/stats/bump_steerable_wavelet/filters/
+tests/wph_quijote/bump_steerable_wavelet/filters/
 .spyproject/
 Notes
 tests/tmp.py

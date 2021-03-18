@@ -72,20 +72,20 @@ class PhaseHarmonics2d(object):
 
     def filters_tensor(self):
         assert(self.M == self.N)
-        bump_steerable_filter_filename = os.path.join('stats', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy')
+        bump_steerable_filter_filename = os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy')
         if not os.path.exists(bump_steerable_filter_filename):
             print("The wavelet filters do not exist. Starting the creation of the wavelet filters. This can take few minutes.")
             compute_bank_of_wavelet([-np.pi/4, 0., np.pi/4, np.pi/2], self.N, self.L, self.J, self.dn)
             print("Wavelet filters created.")
 
-        matfilters = np.load(os.path.join('stats', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy'), allow_pickle=True).item()
+        matfilters = np.load(os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy'), allow_pickle=True).item()
         print("Wavelet filters loaded.")
 
 
         fftpsi = matfilters['filt_fftpsi'].astype(np.complex_)
         hatpsi = np.stack((np.real(fftpsi), np.imag(fftpsi)), axis=-1)
 
-        scaling_function_filename = os.path.join('stats', 'bump_steerable_wavelet', 'filters', 'bump_scaling_functions_N_{N}_J_{J}.npy'.format(N=self.N, J=self.J))
+        scaling_function_filename = os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_scaling_functions_N_{N}_J_{J}.npy'.format(N=self.N, J=self.J))
         if not os.path.exists(scaling_function_filename):
             print("The scaling functions do not exist. Starting the creation of the scaling function")
             create_bank_scaling_functions(self.N, self.J, self.L)

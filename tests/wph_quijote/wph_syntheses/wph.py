@@ -5,14 +5,11 @@ import matplotlib.pyplot as plt
 import copy
 from pathlib import Path
 import os
-import torch
-import sys
+
+from .utils import periodic_dis
 
 
-from .stats.wph_syntheses.utils import periodic_dis
-
-
-class WPH_old:
+class WPH_quijote:
     
     def __init__(self, wph, stat_params, wph_by_chunk):
         self.nb_chunks = len(wph) - 1
@@ -192,7 +189,7 @@ class WPH_old:
         
     def __add__(self, other):
         cpy = copy.deepcopy(self)
-        if type(other) == WPH_old:
+        if type(other) == WPH_quijote:
             cpy.wph += other.wph
             cpy.wph_lp += other.wph_lp
         else:
@@ -202,7 +199,7 @@ class WPH_old:
     
     def __sub__(self, other):
         cpy = copy.deepcopy(self)
-        if type(other) == WPH_old:
+        if type(other) == WPH_quijote:
             cpy.wph -= other.wph
             cpy.wph_lp -= other.wph_lp
         else:
@@ -218,7 +215,7 @@ class WPH_old:
     
     def __truediv__(self, other):
         cpy = copy.deepcopy(self)
-        if type(other) == WPH_old:
+        if type(other) == WPH_quijote:
             cpy.wph /= other.wph
             cpy.wph_lp /= other.wph_lp
         else:
@@ -234,7 +231,7 @@ class WPH_old:
 
 
 def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
-             logscale=True, vmins=None, vmaxs=None, unique_plot=False):
+              logscale=True, vmins=None, vmaxs=None, unique_plot=False):
     if save:
         plt.ioff()
         
@@ -269,10 +266,10 @@ def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
         if var[index] is not None:
             coeffs_std = np.sqrt(var[index].get_coeffs_class("S00", dn1=0, dn2=0)[0].real)
             axs_S00.fill_between(np.arange(len(coeffs_std)),
-                                 coeffs - coeffs_std,
-                                 coeffs + coeffs_std,
-                                 color=p[-1].get_color(),
-                                 alpha=0.2)
+                                  coeffs - coeffs_std,
+                                  coeffs + coeffs_std,
+                                  color=p[-1].get_color(),
+                                  alpha=0.2)
         
     # S11
     for index, wph in enumerate(wph_list):
@@ -281,10 +278,10 @@ def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
         if var[index] is not None:
             coeffs_std = np.sqrt(var[index].get_coeffs_class("S11", dn1=0, dn2=0)[0].real)
             axs_S11.fill_between(np.arange(len(coeffs_std)),
-                                 coeffs - coeffs_std,
-                                 coeffs + coeffs_std,
-                                 color=p[-1].get_color(),
-                                 alpha=0.2)
+                                  coeffs - coeffs_std,
+                                  coeffs + coeffs_std,
+                                  color=p[-1].get_color(),
+                                  alpha=0.2)
         
     # S01
     for index, wph in enumerate(wph_list):
@@ -293,10 +290,10 @@ def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
         if var[index] is not None:
             coeffs_std = np.sqrt(np.absolute(var[index].get_coeffs_class("S01", dn1=0, dn2=0)[0]))
             axs_S01.fill_between(np.arange(len(coeffs_std)),
-                                 coeffs - coeffs_std,
-                                 coeffs + coeffs_std,
-                                 color=p[-1].get_color(),
-                                 alpha=0.2)
+                                  coeffs - coeffs_std,
+                                  coeffs + coeffs_std,
+                                  color=p[-1].get_color(),
+                                  alpha=0.2)
     
     if logscale:
         axs_S00.set_yscale('log')
@@ -332,10 +329,10 @@ def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
         if var[index] is not None:
             coeffs_std = np.sqrt(np.absolute(var[index].get_coeffs_class("C01ex", dn1=0, dn2=0)[0]))
             axs_C01.fill_between(np.arange(len(coeffs_std)),
-                                 coeffs - coeffs_std,
-                                 coeffs + coeffs_std,
-                                 color=p[-1].get_color(),
-                                 alpha=0.2)
+                                  coeffs - coeffs_std,
+                                  coeffs + coeffs_std,
+                                  color=p[-1].get_color(),
+                                  alpha=0.2)
     indices = wph_list[0].get_coeffs_class("C01ex", dn1=0, dn2=0)[1] # ex to avoid redundancy
     j1_cur = -1
     j2_cur = -1
@@ -401,10 +398,10 @@ def plot_wph(wph_list, labels, var=None, save=False, save_dir="", save_end="",
             coeffs_var = np.concatenate((var[index].wph_lp[0], var[index].wph_lp[1])).real
             coeffs_std = np.sqrt(coeffs_var)
             axs_L.fill_between(np.arange(len(coeffs_std)),
-                               coeffs - coeffs_std,
-                               coeffs + coeffs_std,
-                               color=p[-1].get_color(),
-                               alpha=0.2)
+                                coeffs - coeffs_std,
+                                coeffs + coeffs_std,
+                                color=p[-1].get_color(),
+                                alpha=0.2)
     indices = np.concatenate((wph_list[0].wph_lp_indices[0], wph_list[0].wph_lp_indices[1]))
     j1_cur = -1
     for cnt, index in enumerate(indices):
