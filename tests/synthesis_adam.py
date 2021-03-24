@@ -1,92 +1,102 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import matplotlib.pyplot as plt
 import astropy.io.fits as fits
 import time
 import torch
 from torch import optim
-import torch.nn.functional as F
-import os
 import pywph as pw
-import sys
 
-sys.path.append("/home/bruno/Bureau/These ENS/Outils/misc/")
+#######
+# INPUT PARAMETERS
+#######
 
-import misc
-
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-M, N = 512, 512
-J = 8
+M, N = 128, 128
+J = 5
 L = 8
-dn = 0
-cplx = True
-norm = "auto"
+dn = 2
 
-data = fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32)
-data = data[:M, :N] + 1j*data[:M, :N]
-data /= data.std()
+norm = "auto"   # Normalization
+pbc = True      # Periodic boundary conditions
 
-start = time.time()
-wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=cplx)
-wph_op.to(0)
-print(time.time() - start)
+device = 0
 
-# Method 1 bis
-start = time.time()
-data_torch, nb_chunks = wph_op.preconfigure(data)
-coeffs = []
-for i in range(nb_chunks):
-    coeffs.append(wph_op.apply(data_torch, i, norm=norm))
-coeffs = torch.cat(coeffs, -1)
-ell_time = time.time() - start
-print(ell_time)
+optim_maxiter = 50
+optim_lr = 0.04
+
+data = fits.open('data/Q_1.fits')[0].data + 1j*fits.open('data/U_1.fits')[0].data
+data = data[::4, ::4]
+
+output_filename = "synthesis.npy"
+
+#######
+# PREPARATION AND INITIAL GUESS
+#######
+
+# Normalize input data
+data_std = data.std()
+data /= data_std
+
+cplx = np.iscomplexobj(data)
 
 # Initial guess
-x0 = np.random.normal(data.real.mean(), data.real.std(), data.shape) + 1j*np.random.normal(data.imag.mean(), data.imag.std(), data.shape)
-x0 = torch.from_numpy(x0.astype(np.complex64)).to(0)
+if cplx:
+    x0 = np.random.normal(data.real.mean(), data.real.std(), data.shape) \
+        + 1j*np.random.normal(data.imag.mean(), data.imag.std(), data.shape)
+    x0 = x0.astype(np.complex64)
+else:
+    x0 = np.random.normal(data.mean(), data.std(), data.shape).astype(np.float32)
+x0 = torch.from_numpy(x0).to(device)
 x0.requires_grad_(True)
 
-# Optimizer
-optimizer = optim.Adam([x0], lr=0.1)
-
+print("Building operator...")
 start_time = time.time()
+wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
+print(f"Done! (in {time.time() - start_time}s)")
 
-# Training
+print("Computing stats of target image...")
+start_time = time.time()
+coeffs = wph_op.apply(data, norm=norm, padding=not pbc)
+print(f"Done! (in {time.time() - start_time}s)")
+
+#######
+# SYNTHESIS
+#######
+
+# Optimizer
+optimizer = optim.Adam([x0], lr=optim_lr)
+
+total_start_time = time.time()
+
+# Optimization
 best_img = None
 best_loss = float("inf")
-losses_save = []
-img_save = []
-for epoch in range(1, 10):
-    print(f"Epoch: {epoch}")
+for it in range(optim_maxiter):
+    print(f"Iteration: {it}")
+    start_time = time.time()
     optimizer.zero_grad()
+    
+    # Compute the loss (squared 2-norm)
     loss_tot = torch.zeros(1)
     x0, nb_chunks = wph_op.preconfigure(x0)
     for i in range(nb_chunks):
-        coeffs_chunk, indices = wph_op.apply(x0, i, norm=norm, ret_indices=True)
+        coeffs_chunk, indices = wph_op.apply(x0, i, norm=norm, padding=not pbc, ret_indices=True)
         loss = torch.sum(torch.abs(coeffs_chunk - coeffs[indices]) ** 2)
         loss.backward(retain_graph=True)
         loss_tot += loss.detach().cpu()
         del coeffs_chunk, indices, loss
-    print(f"Loss: {loss_tot.numpy()}")
+    
     optimizer.step()
-    losses_save.append(loss_tot.detach().cpu().item())
-    if losses_save[-1] < best_loss:
-        best_loss = loss_tot.item()
+    loss_tot = loss_tot.detach().cpu().item()
+    print(f"Loss: {loss_tot} (computed in {time.time() - start_time}s)")
+    if loss_tot < best_loss:
+        best_loss = loss_tot
         best_img = x0.detach().cpu().numpy()
 
-# fig, ax = plt.subplots(1, 1)
-# bins = np.linspace(0, np.sqrt(2) * np.pi, 100)
-# bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(data, bins)
-# misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
-# bins, ps_iso, ps_iso_std = misc.power_spectrum_iso(best_img, bins)
-# misc.plot_ps_iso(ax, bins, ps_iso, ps_iso_std, ignore_lastbin=True)
-# plt.show()
+print(f"Synthesis ended in {optim_maxiter} iterations.")
+print(f"Synthesis time: {time.time() - total_start_time}s")
 
-# fig, axs = plt.subplots(2, 2, figsize=(10, 7))
-# misc.plot_img(fig, axs[0, 0], data.real, 'Original Q')
-# misc.plot_img(fig, axs[0, 1], data.imag, 'Original U')
-# misc.plot_img(fig, axs[1, 0], best_img.real, 'Synth Q')
-# misc.plot_img(fig, axs[1, 1], best_img.imag, 'Synth U')
-# plt.show()
+x_final = best_img * data_std
+
+if output_filename is not None:
+    np.save(output_filename, x_final)

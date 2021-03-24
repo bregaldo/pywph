@@ -47,7 +47,7 @@ else:
 
 print("Building operator...")
 start_time = time.time()
-wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=0)
+wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
 print(f"Done! (in {time.time() - start_time}s)")
 
 print("Computing stats of target image...")
@@ -65,7 +65,7 @@ eval_cnt = 0
 
 def objective(x):
     global eval_cnt
-    print(f"Evaluation : {eval_cnt}")
+    print(f"Evaluation: {eval_cnt}")
     start_time = time.time()
     
     # Reshape x
