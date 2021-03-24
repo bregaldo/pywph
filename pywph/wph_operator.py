@@ -201,7 +201,8 @@ class WPHOp(torch.nn.Module):
         self.phi_f = to_torch(self.phi_f, device=self.device, precision=self.precision)
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
-                   extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False):
+                   extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
+                   p_list=[0, 1, 2, 3]):
         """
         Load the specified WPH model. A model is made of WPH moments, and scaling moments.
         The default model includes the following class of moments:
@@ -223,6 +224,8 @@ class WPHOp(torch.nn.Module):
             Format corresponds to [j, p]. The default is [].
         cross_moments : bool, optional
             For cross moments (to be implemented). The default is False.
+        p_list : list of int, optional
+            For scaling moments ("L"), list of moments to compute for each low-pass filter.
 
         Raises
         ------
@@ -302,7 +305,7 @@ class WPHOp(torch.nn.Module):
             elif clas == "L":
                 # Scaling moments
                 for j in range(max(self.j_min, 2), self.J - 1):
-                    for p in range(4):
+                    for p in p_list:
                         sm_indices.append([j, p])
                         cnt += 1
                 self._moments_indices[4:] += cnt
