@@ -434,13 +434,10 @@ class WPHOp(torch.nn.Module):
 
         """
         data = to_torch(data, device=self.device, precision=self.precision)
-        data_size = 1
-        for elt in data.shape:
-            data_size *= elt
-        data_size *= 8 if self.precision == "double" else 4
-        if requires_grad:
+        data_size = data.nelement() * data.element_size() * (1 + (not torch.is_complex(data))) # in bytes (assuming complex data)
+        if requires_grad and not data.requires_grad:
             data.requires_grad = True
-        mem_avail = get_memory_available(self.device)
+        mem_avail = get_memory_available(self.device) # in bytes
         
         # Precompute the wavelet transform if we have enough memory
         if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
@@ -509,6 +506,10 @@ class WPHOp(torch.nn.Module):
             if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_moments:  # If self.norm_wph_stds is not complete
                 std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
                 std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                
+                std1[std1 == 0] = 1.0 # To avoid division by zero
+                std2[std2 == 0] = 1.0 # To avoid division by zero
+                
                 stds = torch.stack((std1, std2), dim=-1)
                 if self.norm_wph_stds is None:
                     self.norm_wph_stds = stds
@@ -567,6 +568,7 @@ class WPHOp(torch.nn.Module):
             # Compute or retrieve (approximate) stds
             if self.norm_sm_stds is None or self.norm_sm_stds.shape[-3] != self.nb_scaling_moments: # If self.norm_sm_stds is not complete
                 std = torch.sqrt(torch.mean(torch.abs(data_st_p.detach()) ** 2, (-1, -2), keepdim=True))
+                std[std == 0] = 1.0 # To avoid division by zero
                 if self.norm_sm_stds is None:
                     self.norm_sm_stds = std
                 else:

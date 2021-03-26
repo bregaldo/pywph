@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-from torch.fft import fftn, ifftn
+from torch.fft import fft2, ifft2
 from torch.autograd import Function
 import psutil
 import subprocess
@@ -182,7 +182,7 @@ def fft(z):
         Output.
 
     """
-    return fftn(z, s=(-1, -1))
+    return fft2(z, s=(-1, -1))
 
 
 def ifft(z):
@@ -200,7 +200,7 @@ def ifft(z):
         Output.
 
     """
-    return ifftn(z, s=(-1, -1))
+    return ifft2(z, s=(-1, -1))
 
 
 def real(z):
