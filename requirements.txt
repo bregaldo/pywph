@@ -2,4 +2,5 @@ numpy
 astropy
 matplotlib
 scipy
+psutil
 pytorch>=1.8.0
