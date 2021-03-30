@@ -16,11 +16,7 @@ Related references:
 
 ### Standard installation (from the Python Package Index)
 
-Type in a console:
-
-```
-pip install pywph
-```
+NOT AVAILABLE YET
 
 ### Install from source
 
@@ -39,6 +35,3 @@ pip uninstall pywph
 
 ## Changelog
 
-### 0.9
-
-* First public version.
