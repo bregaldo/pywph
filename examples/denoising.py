@@ -172,10 +172,9 @@ if __name__ == "__main__":
         s_tilde = s_tilde[..., 0] + 1j*s_tilde[..., 1]
     else:
         s_tilde = s_tilde.reshape((M, N)).astype(np.float32)
-    s_tilde = s_tilde * s_std
     
     print(f"Denoising ended in {niter} iterations with optimizer message: {msg}")
     print(f"Denoising total time: {time.time() - total_start_time}s")
     
     if output_filename is not None:
-        np.save(output_filename, [d, s * s_std, n * s_std, s_tilde])
+        np.save(output_filename, [d * s_std, s * s_std, n * s_std, s_tilde * s_std])
