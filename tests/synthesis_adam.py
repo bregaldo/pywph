@@ -7,6 +7,10 @@ import torch
 from torch import optim
 import pywph as pw
 
+"""
+    Does not seem to converge.... TO DEBUG.
+"""
+
 #######
 # INPUT PARAMETERS
 #######
