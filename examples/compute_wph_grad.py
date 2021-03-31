@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import pywph as pw
-import astropy.io.fits as fits
 import torch
 import numpy as np
 
@@ -13,7 +12,7 @@ dn = 0
 device = 0
 
 # Load data and convert it to a torch.tensor (mind the single precision)
-data = fits.open('data/I_1.fits')[0].data[::2, ::2]
+data = np.load('data/I_1.npy')[::2, ::2]
 data_torch = torch.from_numpy(data.astype(np.float32)).to(device)
 
 # Record the operations performed on data_torch

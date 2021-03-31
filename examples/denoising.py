@@ -7,7 +7,6 @@ from functools import partial
 import numpy as np
 import torch
 import scipy.optimize as opt
-import astropy.io.fits as fits
 import pywph as pw
 
 """
@@ -40,7 +39,7 @@ SNR = 1.0
 Mn = 100 # Number of noises per iteration
 
 # Truth map s
-s = fits.open('data/Q_1.fits')[0].data + 1j*fits.open('data/U_1.fits')[0].data
+s = np.load('data/Q_1.npy') + 1j*np.load('data/U_1.npy')
 s = s[::2, ::2]
 s_std = s.std()
 s /= s_std # Normalization

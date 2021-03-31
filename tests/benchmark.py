@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import pywph as pw
-import astropy.io.fits as fits
 import torch
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -16,7 +15,7 @@ dn = 0
 cplx = True
 norm = "auto"
 
-data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
+data = torch.from_numpy(np.load('data/I_1.npy'))
 
 start = time.time()
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=cplx)
@@ -42,7 +41,7 @@ wph_op_old = pw.WPHOp_old(N, N, stat_params)
 print(time.time() - start)
 os.chdir('../tests/')
 
-data = torch.from_numpy(fits.open('data/I_1.fits')[0].data.byteswap().newbyteorder().astype(np.float32))
+data = torch.from_numpy(np.load('data/I_1.npy'))
 data = wph_op_old._to_torch(np.expand_dims(data, axis=0))
 data.requires_grad = True
 

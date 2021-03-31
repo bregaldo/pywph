@@ -2,7 +2,6 @@
 
 import numpy as np
 import pywph as pw
-import astropy.io.fits as fits
 
 from wph_quijote.wph_syntheses.wph_operator_wrapper import WPHOp_quijote
 
@@ -12,7 +11,7 @@ L = 8
 dn = 2
 norm = "auto"
 
-data = fits.open('data/Q_1.fits')[0].data[::2, ::2] + 1j*fits.open('data/U_1.fits')[0].data[::2, ::2]
+data = np.load('data/Q_1.npy')[::2, ::2] + 1j*np.load('data/U_1.npy')[::2, ::2]
 
 for norm in [None, "auto"]:
     wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=0)

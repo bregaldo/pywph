@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import astropy.io.fits as fits
 import time
 import torch
 from torch import optim
@@ -28,7 +27,7 @@ device = 0
 optim_maxiter = 50
 optim_lr = 0.04
 
-data = fits.open('data/Q_1.fits')[0].data + 1j*fits.open('data/U_1.fits')[0].data
+data = np.load('data/Q_1.npy') + 1j*np.load('data/U_1.npy')
 data = data[::4, ::4]
 
 output_filename = "synthesis.npy"

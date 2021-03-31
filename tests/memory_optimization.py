@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import numpy as np
 import pywph as pw
-import astropy.io.fits as fits
 import torch
 import time
 
@@ -14,7 +14,7 @@ norm = None
 device = 0
 
 # Load data
-data = fits.open('data/I_1.fits')[0].data[::2, ::2]
+data = np.load('data/I_1.npy')[::2, ::2]
 
 # Build WPH operator
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
