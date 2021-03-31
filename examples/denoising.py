@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import numpy as np
-import astropy.io.fits as fits
 import time
 import sys
-import torch
-import scipy.optimize as opt
-import pywph as pw
 import multiprocessing as mp
 from functools import partial
-
+import numpy as np
+import torch
+import scipy.optimize as opt
+import astropy.io.fits as fits
+import pywph as pw
 
 """
     Denoising example.
@@ -160,7 +159,8 @@ if __name__ == "__main__":
     total_start_time = time.time()
     
     # We perform a minimization of the objective function, using the noisy map as the initial map
-    result = opt.minimize(objective, d.ravel(), method='L-BFGS-B', jac=True, tol=None, options=optim_params)
+    x0 = np.stack((d.real, d.imag), axis=-1) if cplx else d
+    result = opt.minimize(objective, x0.ravel(), method='L-BFGS-B', jac=True, tol=None, options=optim_params)
     final_loss, s_tilde, niter, msg = result['fun'], result['x'], result['nit'], result['message']
     
     ## Output
