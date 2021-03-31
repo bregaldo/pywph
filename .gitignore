@@ -5,3 +5,4 @@ tests/wph_quijote/bump_steerable_wavelet/filters/
 .spyproject/
 Notes
 tests/tmp.py
+tests/tests.py
