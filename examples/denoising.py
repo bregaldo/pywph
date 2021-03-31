@@ -26,10 +26,10 @@ from functools import partial
 # INPUT PARAMETERS
 #######
 
-M, N = 512, 512
-J = 8
+M, N = 256, 256
+J = 7
 L = 8
-dn = 0
+dn = 2
 
 norm = "auto"   # Normalization
 
@@ -42,6 +42,7 @@ Mn = 100 # Number of noises per iteration
 
 # Truth map s
 s = fits.open('data/Q_1.fits')[0].data + 1j*fits.open('data/U_1.fits')[0].data
+s = s[::2, ::2]
 s_std = s.std()
 s /= s_std # Normalization
 cplx = np.iscomplexobj(s) # Are we dealing with complex maps?
@@ -176,4 +177,4 @@ if __name__ == "__main__":
     print(f"Denoising total time: {time.time() - total_start_time}s")
     
     if output_filename is not None:
-        np.save(output_filename, [d, n * s_std, s_tilde])
+        np.save(output_filename, [d, s * s_std, n * s_std, s_tilde])
