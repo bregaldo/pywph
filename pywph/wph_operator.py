@@ -402,7 +402,7 @@ class WPHOp(torch.nn.Module):
         self.nb_chunks_sm = self.final_chunk_id_per_class[-1] - self.final_chunk_id_per_class[-2]
         self.nb_chunks = self.nb_chunks_wph + self.nb_chunks_sm
         
-        print(f"Nb of chunks: {self.nb_chunks}")
+        #print(f"Nb of chunks: {self.nb_chunks}")
         
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40):
