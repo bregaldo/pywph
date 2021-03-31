@@ -150,6 +150,8 @@ if __name__ == "__main__":
     start_time = time.time()
     coeffs = wph_op.apply(d, norm=norm).to("cpu")
     wph_op.to("cpu") # Move back to CPU before the actual denoising algorithm
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache() # Empty the memory cache to clear devices[0] memory
     print(f"Done! (in {time.time() - start_time}s)")
     
     ## Minimization
