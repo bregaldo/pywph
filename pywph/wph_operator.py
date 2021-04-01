@@ -271,7 +271,7 @@ class WPHOp(torch.nn.Module):
                                 wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0])
                                 cnt += 1
                             else:
-                                for a in range((1 + self.cplx) * self.A):
+                                for a in range(self.A): # Half of alpha angles is enough even for complex data
                                     wph_indices.append([j1, t1, 1, j1, t1, 1, n, a])
                                     cnt += 1
                 self._moments_indices[0:] += cnt
@@ -284,7 +284,7 @@ class WPHOp(torch.nn.Module):
                                 wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0])
                                 cnt += 1
                             else:
-                                for a in range((1 + self.cplx) * self.A):
+                                for a in range(self.A): # Half of alpha angles is enough even for complex data
                                     wph_indices.append([j1, t1, 0, j1, t1, 0, n, a])
                                     cnt += 1
                 self._moments_indices[1:] += cnt
@@ -298,7 +298,11 @@ class WPHOp(torch.nn.Module):
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, self.J):
                         for t1 in range((1 + self.cplx) * self.L):
-                            for t2 in range(t1 - self.L // 2, t1 + self.L // 2):
+                            if self.cplx:
+                                t2_range = range(2 * self.L)
+                            else:
+                                t2_range = range(t1 - self.L // 2, t1 + self.L // 2)
+                            for t2 in t2_range:
                                 if t1 == t2:
                                     dn_eff = min(self.J - 1 - j2, self.dn)
                                     for n in range(dn_eff + 1):
