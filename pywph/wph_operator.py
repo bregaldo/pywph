@@ -329,8 +329,8 @@ class WPHOp(torch.nn.Module):
             self._psi_1_indices.append((elt[0] - self.j_min)*(2 * self.L * n_tau) + elt[1]*n_tau)
             self._psi_2_indices.append((elt[3] - self.j_min)*(2 * self.L * n_tau) + elt[4]*n_tau + elt[6])
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
-        self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device)
-        self._psi_2_indices = torch.from_numpy(np.array(self._psi_2_indices)).to(self.device)
+        self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device, torch.long)
+        self._psi_2_indices = torch.from_numpy(np.array(self._psi_2_indices)).to(self.device, torch.long)
         
         # Scaling moments preparation
         self._phi_indices = []
@@ -338,7 +338,7 @@ class WPHOp(torch.nn.Module):
             elt = self.scaling_moments_indices[i] # [j, p]
             self._phi_indices.append(elt[0] - max(self.j_min, 2))
         self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
-        self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device)
+        self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device, torch.long)
         
         # Useful variables
         self.nb_wph_moments = self.wph_moments_indices.shape[0]
@@ -462,7 +462,7 @@ class WPHOp(torch.nn.Module):
         
         return data, self.nb_chunks
     
-    def free(self):
+    def _free(self):
         """
         Free precomputed data memory.
 
@@ -788,7 +788,7 @@ class WPHOp(torch.nn.Module):
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
-            self.free()
+            self._free()
             
         if ret_wph_obj:
             if chunk_id is None:
