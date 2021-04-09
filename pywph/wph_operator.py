@@ -71,7 +71,9 @@ class WPHOp(torch.nn.Module):
         
         self.load_model()
         
-        self.load_filters(lp_filter_cls, bp_filter_cls)
+        self.lp_filter_cls = GaussianFilter
+        self.bp_filter_cls = BumpSteerableWavelet
+        self.load_filters()
         
         self.preconfigured = False # Precomputation configuration
         
@@ -126,16 +128,13 @@ class WPHOp(torch.nn.Module):
             self.device = device
         return self
         
-    def load_filters(self, lp_filter_cls, bp_filter_cls):
+    def load_filters(self):
         """
         Build the set of low pass and bandpass filters that are used for the transform.
 
         Parameters
         ----------
-        lp_filter_cls : type, optional
-            Class corresponding to the low-pass filter.
-        bp_filter_cls : type, optional
-            Class corresponding to the bandpass filter.
+        None.
             
         Returns
         -------
@@ -154,7 +153,7 @@ class WPHOp(torch.nn.Module):
         # Build psi filters
         for j in range(self.j_min, self.J):
             # Parallel pre-build
-            build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=bp_filter_cls,
+            build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=self.bp_filter_cls,
                                         M=self.M, N=self.N, j=j, L=self.L,
                                         k0=k0, dn=self.dn, alpha_list=self.alpha_list)
             work = np.arange(self.L * (1 + self.cplx))
@@ -188,7 +187,7 @@ class WPHOp(torch.nn.Module):
             j_min = min(self.scaling_moments_indices[:, 0])
             j_max = max(self.scaling_moments_indices[:, 0])
             for j in range(j_min, j_max + 1):
-                g = lp_filter_cls(self.M, self.N, j, sigma0=sigma0, fourier=True).data
+                g = self.lp_filter_cls(self.M, self.N, j, sigma0=sigma0, fourier=True).data
                 self.phi_f.append(g)
                 self.phi_indices.append(j)
         
@@ -202,7 +201,7 @@ class WPHOp(torch.nn.Module):
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
-                   p_list=[0, 1, 2, 3]):
+                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, alpha_list=None):
         """
         Load the specified WPH model. A model is made of WPH moments, and scaling moments.
         The default model includes the following class of moments:
@@ -252,6 +251,28 @@ class WPHOp(torch.nn.Module):
         wph_indices = []
         sm_indices = []
         
+        # Default values for dj, dl, dn, alpha_list
+        if dj is None:
+            dj = self.J - self.j_min - 1 # We consider all possible pair of scales j1 < j2
+        if dl is None:
+            dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
+        reload_filters = False # We ight need to reload the filters
+        if dn is None:
+            dn = self.dn
+        else:
+            if dn > self.dn: # dn is larger than current value, we need to reload the filters
+                self.dn = dn
+                reload_filters = True
+        if alpha_list is None:
+            alpha_list = self.alpha_list
+        else:
+            if alpha_list != self.alpha_list: # alpha_list is different than the current value, we need to reload the filters
+                self.alpha_list = alpha_list
+                reload_filters = True
+        if reload_filters:
+            print("dn or alpha_list parameters demand to rebuild filters...")
+            self.load_filters()
+        
         # Moments and indices
         self._moments_indices = np.array([0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00, S01/C01, Cphase/extra, L
     
@@ -260,16 +281,16 @@ class WPHOp(torch.nn.Module):
             if clas == "S11":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
-                        dn_eff = min(self.J - 1 - j1, self.dn)
-                        for n in range(dn_eff * len(self.alpha_list) + 1):
+                        dn_eff = min(self.J - 1 - j1, dn)
+                        for n in range(dn_eff * len(alpha_list) + 1):
                             wph_indices.append([j1, t1, 1, j1, t1, 1, n])
                             cnt += 1
                 self._moments_indices[0:] += cnt
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range(2 * self.L):
-                        dn_eff = min(self.J - 1 - j1, self.dn)
-                        for n in range(dn_eff * len(self.alpha_list) + 1):
+                        dn_eff = min(self.J - 1 - j1, dn)
+                        for n in range(dn_eff * len(alpha_list) + 1):
                             wph_indices.append([j1, t1, 0, j1, t1, 0, n])
                             cnt += 1
                 self._moments_indices[1:] += cnt
@@ -281,12 +302,12 @@ class WPHOp(torch.nn.Module):
                 self._moments_indices[2:] += cnt
             elif clas == "C01":
                 for j1 in range(self.j_min, self.J):
-                    for j2 in range(j1 + 1, self.J):
+                    for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
                         for t1 in range(2 * self.L):
-                            for t2 in range(t1 - self.L // 2, t1 + self.L // 2 + 1):
+                            for t2 in range(t1 - dl, t1 + dl + 1):
                                 if t1 == t2:
-                                    dn_eff = min(self.J - 1 - j2, self.dn)
-                                    for n in range(dn_eff * len(self.alpha_list) + 1):
+                                    dn_eff = min(self.J - 1 - j2, dn)
+                                    for n in range(dn_eff * len(alpha_list) + 1):
                                         wph_indices.append([j1, t1, 0, j2, t2, 1, n])
                                         cnt += 1
                                 else:
@@ -295,10 +316,10 @@ class WPHOp(torch.nn.Module):
                 self._moments_indices[2:] += cnt
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
-                    for j2 in range(j1 + 1, self.J):
+                    for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
                         for t1 in range(2 * self.L):
-                            dn_eff = min(self.J - 1 - j2, self.dn)
-                            for n in range(dn_eff * len(self.alpha_list) + 1):
+                            dn_eff = min(self.J - 1 - j2, dn)
+                            for n in range(dn_eff * len(alpha_list) + 1):
                                 wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n])
                                 cnt += 1
                 self._moments_indices[3:] += cnt
@@ -325,7 +346,7 @@ class WPHOp(torch.nn.Module):
         self._psi_2_indices = []
         for i in range(self.wph_moments_indices.shape[0]):
             elt = self.wph_moments_indices[i] # [j1, t1, p1, j2, t2, p2, n]
-            n_tau = self.dn * len(self.alpha_list) + 1 # Number of translations per oriented scale
+            n_tau = dn * len(alpha_list) + 1 # Number of translations per oriented scale
             self._psi_1_indices.append((elt[0] - self.j_min)*(2 * self.L * n_tau) + elt[1]*n_tau)
             self._psi_2_indices.append((elt[3] - self.j_min)*(2 * self.L * n_tau) + elt[4]*n_tau + elt[6])
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
