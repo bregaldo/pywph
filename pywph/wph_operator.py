@@ -623,8 +623,8 @@ class WPHOp(torch.nn.Module):
         """
             Internal function for padding.
         """
-        padding_x = self.padding_x_param * 2 ** self.J
-        padding_y = self.padding_y_param * 2 ** self.J
+        padding_x = int(self.padding_x_param * 2 ** self.J)
+        padding_y = int(self.padding_y_param * 2 ** self.J)
         if 2 * padding_y >= self.M or 2 * padding_x >= self.N:
             raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
         return data[..., padding_y:-padding_y, padding_x:-padding_x]
