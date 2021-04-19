@@ -255,15 +255,23 @@ class WPHOp(torch.nn.Module):
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
             dj = self.J - self.j_min - 1 # We consider all possible pair of scales j1 < j2
+            print('Default dj: ' + str(dj))
+        else:
+            print('Updated dj: ' + str(dj))
         if dl is None:
             dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
+            print('Default dl: ' + str(dl))
+        else:
+            print('Updated dl: ' + str(dl))
         reload_filters = False # We ight need to reload the filters
         if dn is None:
             dn = self.dn
+            print('Default dn: ' + str(dn))
         else:
             if dn > self.dn: # dn is larger than current value, we need to reload the filters
                 self.dn = dn
                 reload_filters = True
+            print('Updated dn: ' + str(dn))
         if alpha_list is None:
             alpha_list = self.alpha_list
         else:
