@@ -216,7 +216,8 @@ class WPHOp(torch.nn.Module):
         Parameters
         ----------
         classes : str or list of str, optional
-            Classes of WPH/scaling moments constituting the model. The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
+            Classes of WPH/scaling moments constituting the model. Possibilities are: "S11", "S00", "C00", "S01", "C01", "Cphase", "L".
+            The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
         extra_wph_moments : list of lists of length 7, optional
             Format corresponds to [j1, theta1, p1, j2, theta2, p2, n]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
@@ -243,7 +244,7 @@ class WPHOp(torch.nn.Module):
         if isinstance(classes, str): # Convert to list of str
             classes = [classes]
         classes_new = []
-        for clas in ["S11", "S00", "S01", "C01", "Cphase", "L"]:
+        for clas in ["S11", "S00", "C00", "S01", "C01", "Cphase", "L"]:
             if clas in classes:
                 classes_new.append(clas)
         classes = classes_new
@@ -274,7 +275,7 @@ class WPHOp(torch.nn.Module):
             self.load_filters()
         
         # Moments and indices
-        self._moments_indices = np.array([0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00, S01/C01, Cphase/extra, L
+        self._moments_indices = np.array([0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00/C00, S01/C01, Cphase/extra, L
     
         for clas in classes:
             cnt = 0
@@ -293,6 +294,15 @@ class WPHOp(torch.nn.Module):
                         for n in range(dn_eff * len(alpha_list) + 1):
                             wph_indices.append([j1, t1, 0, j1, t1, 0, n])
                             cnt += 1
+                self._moments_indices[1:] += cnt
+            elif clas == "C00": # Non default moments
+                for j1 in range(self.j_min, self.J):
+                    for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
+                        for t1 in range(2 * self.L):
+                            for t2 in range(t1 - dl, t1 + dl + 1):
+                                # No translation here by default
+                                wph_indices.append([j1, t1, 0, j2, t2 % (2 * self.L), 0, 0])
+                                cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "S01":
                 for j1 in range(self.j_min, self.J):
