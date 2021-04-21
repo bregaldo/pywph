@@ -444,7 +444,8 @@ class WPHOp(torch.nn.Module):
         #print(f"Nb of chunks: {self.nb_chunks}")
         
     def preconfigure(self, data, requires_grad=False,
-                     mem_chunk_factor=25, mem_chunk_factor_grad=40):
+                     mem_chunk_factor=25, mem_chunk_factor_grad=40,
+                     precompute_wt=True, precompute_modwt=True):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -463,6 +464,12 @@ class WPHOp(torch.nn.Module):
             DESCRIPTION. The default is 20.
         mem_chunk_factor_grad : int, optional
             DESCRIPTION. The default is 35.
+        precompute_wt : bool, optional
+            Do we precompute the wavelet transform of input data ? (if enough memory is available)
+            The default is True.
+        precompute_modwt : bool, optional
+            Do we precompute the modulust of the wavelet transform of input data ? (if enough memory is available)
+            The default is True.
 
         Returns
         -------
@@ -479,7 +486,7 @@ class WPHOp(torch.nn.Module):
         mem_avail = get_memory_available(self.device) # in bytes
         
         # Precompute the wavelet transform if we have enough memory
-        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
+        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_wt:
             #print("Enough memory to store the wavelet transform of input data.")
             data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
             data_wt_f = data_f * self.psi_f
@@ -490,7 +497,7 @@ class WPHOp(torch.nn.Module):
             mem_avail -= data_size * self.psi_f.shape[0]
         
         # Precompute the modulus of the wavelet transform if we have enough memory
-        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail:
+        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_modwt and precompute_wt:
             #print("Enough memory to store the modulus of the wavelet transform of input data.")
             self._tmp_data_wt_mod = torch.abs(self._tmp_data_wt) # We keep this variable in memory
             mem_avail -= data_size * self.psi_f.shape[0]
