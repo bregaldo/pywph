@@ -78,7 +78,7 @@ def objective(x):
     loss_tot = torch.zeros(1)
     x_curr, nb_chunks = wph_op.preconfigure(x_curr, requires_grad=True)
     for i in range(nb_chunks):
-        coeffs_chunk, indices = wph_op.apply(x_curr, i, norm=norm, padding=not pbc, ret_indices=True)
+        coeffs_chunk, indices = wph_op.apply(x_curr, i, norm=norm, ret_indices=True)
         loss = torch.sum(torch.abs(coeffs_chunk - coeffs[indices]) ** 2)
         loss.backward(retain_graph=True)
         loss_tot += loss.detach().cpu()
