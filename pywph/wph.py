@@ -15,7 +15,7 @@ class WPH:
     Wavelet Phase Harmonics coefficients container.
     """
     
-    def __init__(self, coeffs, wph_coeffs_indices, sm_coeffs_indices=np.array([]), J=None, L=None):
+    def __init__(self, coeffs, wph_coeffs_indices, sm_coeffs_indices=np.array([]), J=None, L=None, A=None):
         """
         Constructor.
         Converts and store input coefficients and corresponding indices to numpy arrays.
@@ -25,7 +25,7 @@ class WPH:
         coeffs : list or np.ndarray or torch.tensor
             Input coefficients.
         wph_coeffs_indices : list or np.ndarray or torch.tensor
-            Indices for the WPH moments. Order: [j1, theta1, p1, j2, theta2, p2, n].
+            Indices for the WPH moments. Order: [j1, theta1, p1, j2, theta2, p2, n, alpha].
         sm_coeffs_indices : list or np.ndarray or torch.tensor
             Indices for the scaling moments. Order: [j, p]. The default is np.array([]).
 
@@ -66,12 +66,17 @@ class WPH:
         if L is not None:
             self.L = L
         else: # Auto-detection of L
-            self.L = (max(self.wph_coeffs_indices[:, 1].max(), self.wph_coeffs_indices[:, 4].max()) + 1) // 2
+            self.L = (max(self.wph_coeffs_indices[:, 1].max(), self.wph_coeffs_indices[:, 4].max()) + 1) // (1 + self.cplx)
+            
+        if A is not None:
+            self.A = A
+        else: # Auto-detection of A
+            self.A = (self.wph_coeffs_indices[:, 7].max() + 1) // 2
 
     def reorder(self):
         """
         Lexicographical reordering of the coefficients:
-        - for WPH moments on [j1, t1, p1, j2, t2, p2, n]
+        - for WPH moments on [j1, t1, p1, j2, t2, p2, n, a]
         - for scaling moments on [j, p]
         Returns
         -------
@@ -96,7 +101,7 @@ class WPH:
                 self.sm_coeffs[..., i] = sm_coeffs_copy[..., indices[i]]
                 self.sm_coeffs_indices[i] = sm_coeffs_indices_copy[indices[i]]
             
-    def _filter_args(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, sm=False):
+    def _filter_args(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, a=None, sm=False):
         """
         Internal function for coefficients selection.
         """
@@ -126,6 +131,8 @@ class WPH:
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == p2)
             if n is not None:
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 6] == n)
+            if a is not None:
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 7] == a)
             
             # Selection per class
             if clas == "S11":
@@ -157,7 +164,7 @@ class WPH:
                 raise Exception("Unknown class of coefficients!")
         return filtering
     
-    def get_coeffs(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, sm=False):
+    def get_coeffs(self, clas="", j=None, p=None, j1=None, t1=None, p1=None, j2=None, t2=None, p2=None, n=None, a=None, sm=False):
         """
         Selection of coefficients.
         To select scaling moments coefficients use sm=True, otherwise select WPH coefficients.
@@ -184,6 +191,8 @@ class WPH:
             DESCRIPTION. The default is None.
         n : int, optional
             DESCRIPTION. The default is None.
+        a : int, optional
+            DESCRIPTION. The default is None.
         sm : bool, optional
             DESCRIPTION. The default is False.
 
@@ -195,7 +204,7 @@ class WPH:
             Corresponding indices.
 
         """
-        filtering = self._filter_args(clas=clas, j=j, p=p, j1=j1, t1=t1, p1=p1, j2=j2, t2=t2, p2=p2, n=n, sm=sm)
+        filtering = self._filter_args(clas=clas, j=j, p=p, j1=j1, t1=t1, p1=p1, j2=j2, t2=t2, p2=p2, n=n, a=a, sm=sm)
         if sm or clas == "L":
             return self.sm_coeffs[..., filtering], self.sm_coeffs_indices[filtering, :]
         else:
@@ -221,14 +230,14 @@ class WPH:
         
         # Filling
         for i in range(self.wph_coeffs_indices.shape[0]):
-            j1, t1, p1, j2, t2, p2, n = tuple(self.wph_coeffs_indices[i])
+            j1, t1, p1, j2, t2, p2, n, a = tuple(self.wph_coeffs_indices[i])
             dt = periodic_distance(t1, t2, 2 * self.L)
-            if (j1, 0, p1, j2, dt, p2, n) in indices_cnt.keys():
-                indices_cnt[(j1, 0, p1, j2, dt, p2, n)] += 1
-                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] += self.wph_coeffs[..., i]
+            if (j1, 0, p1, j2, dt, p2, n, a) in indices_cnt.keys():
+                indices_cnt[(j1, 0, p1, j2, dt, p2, n, a)] += 1
+                wph_isopar[(j1, 0, p1, j2, dt, p2, n, a)] += self.wph_coeffs[..., i]
             else:
-                indices_cnt[(j1, 0, p1, j2, dt, p2, n)] = 1
-                wph_isopar[(j1, 0, p1, j2, dt, p2, n)] = self.wph_coeffs[..., i]
+                indices_cnt[(j1, 0, p1, j2, dt, p2, n, a)] = 1
+                wph_isopar[(j1, 0, p1, j2, dt, p2, n, a)] = self.wph_coeffs[..., i]
                 
         # Conversion into numpy arrays
         indices = []

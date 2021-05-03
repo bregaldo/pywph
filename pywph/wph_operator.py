@@ -4,6 +4,7 @@ import os
 import numpy as np
 import torch
 import multiprocessing as mp
+from itertools import chain
 from functools import partial
 
 from .filters import GaussianFilter, BumpSteerableWavelet
@@ -12,16 +13,16 @@ from .wph import WPH
 
 
 # Internal function for the parallel pre-building of the bandpass filters (see WPHOp.load_filters)
-def _build_bp_para(theta_list, bp_filter_cls, M, N, j, L, k0, dn, alpha_list):
+def _build_bp_para(theta_list, bp_filter_cls, M, N, j, L, k0, dn, A):
     ret = []
     for theta in theta_list:
         for n in range(dn + 1):
             if n == 0:
                 ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, fourier=True).data)
             else:
-                for alpha in alpha_list:
+                for alpha in range(2 * A):
                     # Consistent with Tanguys'code (3*n instead of n)
-                    ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, n=3*n, alpha=alpha, fourier=True).data)
+                    ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, n=3*n, alpha=alpha*np.pi/A, fourier=True).data)
     return ret
 
 
@@ -32,7 +33,7 @@ class WPHOp(torch.nn.Module):
     
     def __init__(self, M, N, J, L=8, cplx=True,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
-                 j_min=0, dn=0, alpha_list=[-np.pi/4, 0.0, np.pi/4, np.pi/2],
+                 j_min=0, dn=0, A=4,
                  precision="single", device="cpu"):
         """
         Constructor.
@@ -50,13 +51,18 @@ class WPHOp(torch.nn.Module):
         cplx : bool, optional
             Set it to true if the WPHOp instance will ever apply to complex data.
             This would load in memory the whole set of bandpass filters (not really implemented yet).
-            The default is False.
-        lp_filter_cls : type, optional
+            The default is True.
+        lp_filter_cls : class, optional
             Class corresponding to the low-pass filter. The default is GaussianFilter.
-        bp_filter_cls : type, optional
+        bp_filter_cls : class, optional
             Class corresponding to the bandpass filter. The default is BumpSteerableWavelet.
-        j_min : type, optional
+        j_min : int, optional
             Minimum dyadic scale. The default is 0.
+        dn : int, optional
+            \Delta_n parameter. Number of radial steps for the discretization of the \tau variable. The default is 0.
+        A : int, optional
+            Number of azimuthal steps on [0, \pi[ for the discretization of the \alpha variable.  The default is 4.
+            Default value leads to the following set of values for \alpha: {0, \pi/4, \pi/2, 3\pi/4, \pi, -3\pi/4, -\pi/2, -\pi/4}.
 
         Returns
         -------
@@ -65,7 +71,7 @@ class WPHOp(torch.nn.Module):
         """
         super().__init__()
         self.M, self.N, self.J, self.L, self.cplx, self.j_min = M, N, J, L, cplx, j_min
-        self.alpha_list, self.dn = alpha_list, dn
+        self.dn, self.A = dn, A
         self.precision = precision
         self.device = device
         
@@ -155,7 +161,7 @@ class WPHOp(torch.nn.Module):
             # Parallel pre-build
             build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=self.bp_filter_cls,
                                         M=self.M, N=self.N, j=j, L=self.L,
-                                        k0=k0, dn=self.dn, alpha_list=self.alpha_list)
+                                        k0=k0, dn=self.dn, A=self.A)
             work = np.arange(self.L * (1 + self.cplx))
             nb_processes = min(os.cpu_count(), len(work))
             work_list = np.array_split(work, nb_processes)
@@ -167,7 +173,7 @@ class WPHOp(torch.nn.Module):
             pool.close()
             
             # We save the filters in a list
-            nb_filters_per_theta = len(self.alpha_list) * self.dn + 1
+            nb_filters_per_theta = 2 * self.A * self.dn + 1
             for theta in range(self.L * (1 + self.cplx)):
                 bp_list = bp_filters[theta * nb_filters_per_theta: (theta + 1) * nb_filters_per_theta]
                 index = 0
@@ -177,7 +183,7 @@ class WPHOp(torch.nn.Module):
                         self.psi_indices.append([j, theta, n, 0])
                         index += 1
                     else:
-                        for alpha_id in range(len(self.alpha_list)):
+                        for alpha_id in range(2 * self.A):
                             self.psi_f.append(bp_list[index])
                             self.psi_indices.append([j, theta, n, alpha_id])
                             index += 1
@@ -210,7 +216,7 @@ class WPHOp(torch.nn.Module):
         These classes are defined in Allys+2020 and Regaldo-Saint Blancard+2021.
         One can add custom WPH and scaling moments using extra_wph_moments and extra_scaling_moments parameters.
         The expected formats are:
-            - for extra_wph_moments: list of lists of 7 elements corresponding to [j1, theta1, p1, j2, theta2, p2, n]
+            - for extra_wph_moments: list of lists of 8 elements corresponding to [j1, theta1, p1, j2, theta2, p2, n, alpha]
             - for extra_scaling_moments: list of lists of 2 elements correponding to [j, p]
 
         Parameters
@@ -219,14 +225,14 @@ class WPHOp(torch.nn.Module):
             Classes of WPH/scaling moments constituting the model. Possibilities are: "S11", "S00", "C00", "S01", "C01", "Cphase", "L".
             The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
         extra_wph_moments : list of lists of length 7, optional
-            Format corresponds to [j1, theta1, p1, j2, theta2, p2, n]. The default is [].
+            Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
             Format corresponds to [j, p]. The default is [].
         cross_moments : bool, optional
             For cross moments (to be implemented). The default is False.
         p_list : list of int, optional
             For scaling moments ("L"), list of moments to compute for each low-pass filter.
-
+            
         Raises
         ------
         Exception
@@ -289,19 +295,29 @@ class WPHOp(torch.nn.Module):
             cnt = 0
             if clas == "S11":
                 for j1 in range(self.j_min, self.J):
-                    for t1 in range(2 * self.L):
+                    for t1 in range((1 + self.cplx) * self.L):
                         dn_eff = min(self.J - 1 - j1, dn)
-                        for n in range(dn_eff * len(alpha_list) + 1):
-                            wph_indices.append([j1, t1, 1, j1, t1, 1, n])
-                            cnt += 1
+                        for n in range(dn_eff + 1):
+                            if n == 0:
+                                wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0])
+                                cnt += 1
+                            else:
+                                for a in range(self.A): # Half of alpha angles is enough even for complex data
+                                    wph_indices.append([j1, t1, 1, j1, t1, 1, n, a])
+                                    cnt += 1
                 self._moments_indices[0:] += cnt
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
-                    for t1 in range(2 * self.L):
+                    for t1 in range((1 + self.cplx) * self.L):
                         dn_eff = min(self.J - 1 - j1, dn)
-                        for n in range(dn_eff * len(alpha_list) + 1):
-                            wph_indices.append([j1, t1, 0, j1, t1, 0, n])
-                            cnt += 1
+                        for n in range(dn_eff + 1):
+                            if n == 0:
+                                wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0])
+                                cnt += 1
+                            else:
+                                for a in range(self.A): # Half of alpha angles is enough even for complex data
+                                    wph_indices.append([j1, t1, 0, j1, t1, 0, n, a])
+                                    cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "C00": # Non default moments
                 for j1 in range(self.j_min, self.J):
@@ -314,32 +330,46 @@ class WPHOp(torch.nn.Module):
                 self._moments_indices[1:] += cnt
             elif clas == "S01":
                 for j1 in range(self.j_min, self.J):
-                    for t1 in range(2 * self.L):
-                        wph_indices.append([j1, t1, 0, j1, t1, 1, 0])
+                    for t1 in range((1 + self.cplx) * self.L):
+                        wph_indices.append([j1, t1, 0, j1, t1, 1, 0, 0])
                         cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "C01":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
-                        for t1 in range(2 * self.L):
-                            for t2 in range(t1 - dl, t1 + dl + 1):
+                        for t1 in range((1 + self.cplx) * self.L):
+                            if self.cplx:
+                                t2_range = chain(range(t1 - dl, t1 + dl), range(t1 + L - dl, t1 + L + dl))
+                            else:
+                                t2_range = range(t1 - dl, t1 + dl)
+                            for t2 in t2_range:
                                 if t1 == t2:
                                     dn_eff = min(self.J - 1 - j2, dn)
-                                    for n in range(dn_eff * len(alpha_list) + 1):
-                                        wph_indices.append([j1, t1, 0, j2, t2, 1, n])
-                                        cnt += 1
+                                    for n in range(dn_eff + 1):
+                                        if n == 0:
+                                            wph_indices.append([j1, t1, 0, j2, t2, 1, n, 0])
+                                            cnt += 1
+                                        else:
+                                            for a in range(2 * self.A): # Factor 2 needed even for real data
+                                                wph_indices.append([j1, t1, 0, j2, t2, 1, n, a])
+                                                cnt += 1
                                 else:
-                                    wph_indices.append([j1, t1, 0, j2, t2 % (2 * self.L), 1, 0])
+                                    wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 1, 0, 0])
                                     cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
-                        for t1 in range(2 * self.L):
+                        for t1 in range((1 + self.cplx) * self.L):
                             dn_eff = min(self.J - 1 - j2, dn)
-                            for n in range(dn_eff * len(alpha_list) + 1):
-                                wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n])
-                                cnt += 1
+                            for n in range(dn_eff + 1):
+                                if n == 0:
+                                    wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, 0])
+                                    cnt += 1
+                                else:
+                                    for a in range(2 * self.A): # Factor 2 needed even for real data
+                                        wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a])
+                                        cnt += 1
                 self._moments_indices[3:] += cnt
             elif clas == "L":
                 # Scaling moments
@@ -363,10 +393,10 @@ class WPHOp(torch.nn.Module):
         self._psi_1_indices = []
         self._psi_2_indices = []
         for i in range(self.wph_moments_indices.shape[0]):
-            elt = self.wph_moments_indices[i] # [j1, t1, p1, j2, t2, p2, n]
-            n_tau = dn * len(alpha_list) + 1 # Number of translations per oriented scale
-            self._psi_1_indices.append((elt[0] - self.j_min)*(2 * self.L * n_tau) + elt[1]*n_tau)
-            self._psi_2_indices.append((elt[3] - self.j_min)*(2 * self.L * n_tau) + elt[4]*n_tau + elt[6])
+            elt = self.wph_moments_indices[i] # [j1, t1, p1, j2, t2, p2, n, a]
+            n_tau = dn * (2 * self.A) + 1 # Number of translations per oriented scale
+            self._psi_1_indices.append((elt[0] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[1]*n_tau)
+            self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau + elt[6])
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
         self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device, torch.long)
         self._psi_2_indices = torch.from_numpy(np.array(self._psi_2_indices)).to(self.device, torch.long)
@@ -838,14 +868,14 @@ class WPHOp(torch.nn.Module):
             
         if ret_wph_obj:
             if chunk_id is None:
-                return WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L)
+                return WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L, A=self.A)
             else:
                 if chunk_id < self.nb_wph_moments:
                     cov_indices = self.wph_moments_indices[self.wph_moments_chunk_list[chunk_id]]
-                    return WPH(coeffs, cov_indices, J=self.J, L=self.L)
+                    return WPH(coeffs, cov_indices, J=self.J, L=self.L, A=self.A)
                 else:
                     cov_indices = self.scaling_moments_indices[self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]]
-                return WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L)
+                return WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L, A=self.A)
         elif ret_indices:
             return coeffs, indices
         else:
