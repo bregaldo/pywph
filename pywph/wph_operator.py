@@ -322,10 +322,14 @@ class WPHOp(torch.nn.Module):
             elif clas == "C00": # Non default moments
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
-                        for t1 in range(2 * self.L):
-                            for t2 in range(t1 - dl, t1 + dl + 1):
+                        for t1 in range((1 + self.cplx) * self.L):
+                            if self.cplx:
+                                t2_range = chain(range(t1 - dl, t1 + dl), range(t1 + self.L - dl, t1 + self.L + dl))
+                            else:
+                                t2_range = range(t1 - dl, t1 + dl)
+                            for t2 in t2_range:
                                 # No translation here by default
-                                wph_indices.append([j1, t1, 0, j2, t2 % (2 * self.L), 0, 0])
+                                wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 0, 0, 0])
                                 cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "S01":
