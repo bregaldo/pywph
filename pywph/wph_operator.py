@@ -207,7 +207,7 @@ class WPHOp(torch.nn.Module):
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
-                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, alpha_list=None):
+                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, A=None):
         """
         Load the specified WPH model. A model is made of WPH moments, and scaling moments.
         The default model includes the following class of moments:
@@ -278,14 +278,14 @@ class WPHOp(torch.nn.Module):
                 self.dn = dn
                 reload_filters = True
             print('Updated dn: ' + str(dn))
-        if alpha_list is None:
-            alpha_list = self.alpha_list
+        if A is None:
+            A = self.A
         else:
-            if alpha_list != self.alpha_list: # alpha_list is different than the current value, we need to reload the filters
-                self.alpha_list = alpha_list
+            if A != self.A: # alpha_list is different than the current value, we need to reload the filters
+                self.A = A
                 reload_filters = True
         if reload_filters:
-            print("dn or alpha_list parameters demand to rebuild filters...")
+            print("dn or A parameters demand to rebuild filters...")
             self.load_filters()
         
         # Moments and indices
@@ -339,7 +339,7 @@ class WPHOp(torch.nn.Module):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
                         for t1 in range((1 + self.cplx) * self.L):
                             if self.cplx:
-                                t2_range = chain(range(t1 - dl, t1 + dl), range(t1 + L - dl, t1 + L + dl))
+                                t2_range = chain(range(t1 - dl, t1 + dl), range(t1 + self.L - dl, t1 + self.L + dl))
                             else:
                                 t2_range = range(t1 - dl, t1 + dl)
                             for t2 in t2_range:
