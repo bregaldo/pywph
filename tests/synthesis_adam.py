@@ -54,7 +54,7 @@ x0.requires_grad_(True)
 
 print("Building operator...")
 start_time = time.time()
-wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
+wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device, cplx=True)
 print(f"Done! (in {time.time() - start_time}s)")
 
 print("Computing stats of target image...")

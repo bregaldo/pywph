@@ -42,8 +42,23 @@ for j in range(2, J - 1):
 phi_f = np.array(phi_f)
 
 # Build pywph filters
-wph_op = pw.WPHOp(M, N, J, L=L, dn=dn)
+wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, cplx=True)
+
+# Build array of corresponding indices
+pywph_psi_indices = []
+cnt = 0
+for j in range(J):
+    for l in range(2 * L):
+        for n in range(dn + 1):
+            if n == 0:
+                pywph_psi_indices.append(cnt)
+                cnt += 1
+            else:
+                for a in range(2 * wph_op.A): # A should be equalt to 4
+                    if a in [0, 1, 2, 7]:
+                        pywph_psi_indices.append(cnt)
+                    cnt += 1
 
 # Tests
-assert np.allclose(psi_f, wph_op.psi_f)
+assert np.allclose(psi_f, wph_op.psi_f[pywph_psi_indices])
 assert np.allclose(phi_f, wph_op.phi_f)

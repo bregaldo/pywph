@@ -6,6 +6,7 @@ import torch
 import scipy.optimize as opt
 import pywph as pw
 from wph_quijote.wph_syntheses.wph_operator_wrapper import WPHOp_quijote
+from wph_quijote_legacy_model import wph_quijote_legacy_model
 
 #######
 # INPUT PARAMETERS
@@ -51,7 +52,9 @@ print("======== With PyWPH ========")
 
 print("Building operator...")
 start_time = time.time()
-wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=0)
+wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=0, cplx=True)
+wph_moments_indices, scaling_moments_indices = wph_quijote_legacy_model(J, L, dn=dn)
+wph_op.load_model([], extra_wph_moments=wph_moments_indices, extra_scaling_moments=scaling_moments_indices)
 print(f"Done! (in {time.time() - start_time}s)")
 
 print("Computing stats of target image...")

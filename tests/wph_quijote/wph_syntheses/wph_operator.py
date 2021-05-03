@@ -75,7 +75,7 @@ class PhaseHarmonics2d(object):
         bump_steerable_filter_filename = os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy')
         if not os.path.exists(bump_steerable_filter_filename):
             print("The wavelet filters do not exist. Starting the creation of the wavelet filters. This can take few minutes.")
-            compute_bank_of_wavelet([-np.pi/4, 0., np.pi/4, np.pi/2], self.N, self.L, self.J, self.dn)
+            compute_bank_of_wavelet([0., np.pi/4, np.pi/2, -np.pi/4], self.N, self.L, self.J, self.dn)
             print("Wavelet filters created.")
 
         matfilters = np.load(os.path.join('wph_quijote', 'bump_steerable_wavelet', 'filters', 'bump_steerable_wavelet_N_'+str(self.N)+'_J_'+str(self.J)+'_L'+str(self.L)+'_dn'+str(self.dn)+'.npy'), allow_pickle=True).item()

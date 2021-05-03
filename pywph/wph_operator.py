@@ -31,7 +31,7 @@ class WPHOp(torch.nn.Module):
     Wavelet Phase Harmonic (WPH) operator.
     """
     
-    def __init__(self, M, N, J, L=8, cplx=True,
+    def __init__(self, M, N, J, L=8, cplx=False,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
                  j_min=0, dn=0, A=4,
                  precision="single", device="cpu"):
@@ -50,8 +50,8 @@ class WPHOp(torch.nn.Module):
             Number of angles between 0 and pi. The default is 8.
         cplx : bool, optional
             Set it to true if the WPHOp instance will ever apply to complex data.
-            This would load in memory the whole set of bandpass filters (not really implemented yet).
-            The default is True.
+            This would load in memory the whole set of bandpass filters.
+            The default is False.
         lp_filter_cls : class, optional
             Class corresponding to the low-pass filter. The default is GaussianFilter.
         bp_filter_cls : class, optional
@@ -261,27 +261,22 @@ class WPHOp(torch.nn.Module):
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
             dj = self.J - self.j_min - 1 # We consider all possible pair of scales j1 < j2
-            print('Default dj: ' + str(dj))
-        else:
-            print('Updated dj: ' + str(dj))
+        print(f"dj = {dj}")
         if dl is None:
             dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
-            print('Default dl: ' + str(dl))
-        else:
-            print('Updated dl: ' + str(dl))
+        print(f"dl = {dl}")
         reload_filters = False # We ight need to reload the filters
         if dn is None:
             dn = self.dn
-            print('Default dn: ' + str(dn))
         else:
             if dn > self.dn: # dn is larger than current value, we need to reload the filters
                 self.dn = dn
                 reload_filters = True
-            print('Updated dn: ' + str(dn))
+        print(f"dn = {dn}")
         if A is None:
             A = self.A
         else:
-            if A != self.A: # alpha_list is different than the current value, we need to reload the filters
+            if A != self.A: # A is different than the current value, we need to reload the filters
                 self.A = A
                 reload_filters = True
         if reload_filters:
@@ -388,7 +383,9 @@ class WPHOp(torch.nn.Module):
         # Extra moments if provided
         wph_indices += extra_wph_moments
         sm_indices += extra_scaling_moments
-        
+        self._moments_indices[3:] += len(extra_wph_moments)
+        self._moments_indices[4:] += len(extra_scaling_moments)
+
         # Conversion to numpy arrays
         self.wph_moments_indices = np.array(wph_indices)
         self.scaling_moments_indices = np.array(sm_indices)
@@ -400,7 +397,10 @@ class WPHOp(torch.nn.Module):
             elt = self.wph_moments_indices[i] # [j1, t1, p1, j2, t2, p2, n, a]
             n_tau = dn * (2 * self.A) + 1 # Number of translations per oriented scale
             self._psi_1_indices.append((elt[0] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[1]*n_tau)
-            self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau + elt[6])
+            if elt[6] == 0: # n == 0
+                self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau)
+            else: # n != 0
+                self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau + (elt[6] - 1)*(2 * self.A) + elt[7] + 1)
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
         self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device, torch.long)
         self._psi_2_indices = torch.from_numpy(np.array(self._psi_2_indices)).to(self.device, torch.long)
