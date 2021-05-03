@@ -265,7 +265,7 @@ class WPHOp(torch.nn.Module):
         if dl is None:
             dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
         print(f"dl = {dl}")
-        reload_filters = False # We ight need to reload the filters
+        reload_filters = False # We might need to reload the filters
         if dn is None:
             dn = self.dn
         else:
@@ -479,7 +479,7 @@ class WPHOp(torch.nn.Module):
         
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40,
-                     precompute_wt=True, precompute_modwt=True):
+                     precompute_wt=False, precompute_modwt=False):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -497,7 +497,7 @@ class WPHOp(torch.nn.Module):
         mem_chunk_factor : int, optional
             DESCRIPTION. The default is 20.
         mem_chunk_factor_grad : int, optional
-            DESCRIPTION. The default is 35.
+            DESCRIPTION. The default is 40.
         precompute_wt : bool, optional
             Do we precompute the wavelet transform of input data ? (if enough memory is available)
             The default is True.

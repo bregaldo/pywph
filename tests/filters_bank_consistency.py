@@ -54,7 +54,7 @@ for j in range(J):
                 pywph_psi_indices.append(cnt)
                 cnt += 1
             else:
-                for a in range(2 * wph_op.A): # A should be equalt to 4
+                for a in range(2 * wph_op.A): # A should be equal to 4
                     if a in [0, 1, 2, 7]:
                         pywph_psi_indices.append(cnt)
                     cnt += 1
