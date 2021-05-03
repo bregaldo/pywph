@@ -117,19 +117,22 @@ class BumpSteerableWavelet (Filter):
     def _periodization(self, filter_f):
         filter_f_shifted = np.fft.fftshift(filter_f)
         
-        filter_f_shifted[self.M//2:self.M, self.N//2:3*self.N//2] += filter_f_shifted[3*self.M//2:, self.N//2:3*self.N//2]
-        filter_f_shifted[self.M:3*self.M//2, self.N//2:3*self.N//2] += filter_f_shifted[:self.M//2, self.N//2:3*self.N//2]
-    
-        filter_f_shifted[self.M//2:3*self.M//2, self.N//2:self.N] += filter_f_shifted[self.M//2:3*self.M//2, 3*self.N//2:]
-        filter_f_shifted[self.M//2:3*self.M//2, self.N:3*self.N//2] += filter_f_shifted[self.M//2:3*self.M//2, :self.N//2]
-    
-        filter_f_shifted[self.M:3*self.M//2, self.N:3*self.N//2] += filter_f_shifted[0:self.M//2, :self.N//2]
-        filter_f_shifted[self.M//2:self.M, self.N//2:self.N] += filter_f_shifted[3*self.M//2:, 3*self.N//2:]
-    
-        filter_f_shifted[self.M: 3*self.M//2, self.N//2:self.N] += filter_f_shifted[:self.M//2, 3*self.N//2:]
-        filter_f_shifted[self.M//2:self.M, self.N:3*self.N//2] += filter_f_shifted[3*self.M//2:, :self.N//2]
+        M = self.M
+        N = self.N
         
-        return np.fft.ifftshift(filter_f_shifted[self.M//2:3*self.M//2, self.N//2:3*self.N//2])
+        filter_f_shifted[M - M//2:M, N - N//2:N + (N+1)//2] += filter_f_shifted[M + (M+1)//2:, N - N//2:N + (N+1)//2]
+        filter_f_shifted[M:M + (M+1)//2, N - N//2:N + (N+1)//2] += filter_f_shifted[:M - M//2, N - N//2:N + (N+1)//2]
+    
+        filter_f_shifted[M - M//2:M + (M+1)//2, N - N//2:N] += filter_f_shifted[M - M//2:M + (M+1)//2, N + (N+1)//2:]
+        filter_f_shifted[M - M//2:M + (M+1)//2, N:N + (N+1)//2] += filter_f_shifted[M - M//2:M + (M+1)//2, :N - N//2]
+    
+        filter_f_shifted[M:M + (M+1)//2, N:N + (N+1)//2] += filter_f_shifted[:M - M//2, :N - N//2]
+        filter_f_shifted[M - M//2:M, N - N//2:N] += filter_f_shifted[M + (M+1)//2:, N + (N+1)//2:]
+    
+        filter_f_shifted[M:M + (M+1)//2, N - N//2:N] += filter_f_shifted[:M - M//2, N + (N+1)//2:]
+        filter_f_shifted[M - M//2:M, N:N + (N+1)//2] += filter_f_shifted[M + (M+1)//2:, :N - N//2]
+        
+        return np.fft.ifftshift(filter_f_shifted[M - M//2:M + (M+1)//2, N - N//2:N + (N+1)//2])
     
     def build(self):
         # Normalization
