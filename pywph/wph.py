@@ -50,7 +50,7 @@ class WPH:
         self.wph_coeffs = coeffs[..., :wph_coeffs_indices.shape[0]] # WPH moments estimates
         self.sm_coeffs = coeffs[..., wph_coeffs_indices.shape[0]:] # Scaling moments estimates
         if self.cplx:
-            self.sm_coeffs = self.sm_coeffs.reshape(self.sm_coeffs.shape[:-2] + (2, -1))
+            self.sm_coeffs = self.sm_coeffs.reshape(self.sm_coeffs.shape[:-1] + (2, -1))
         
         # Store indices
         self.wph_coeffs_indices = to_numpy(wph_coeffs_indices).copy()
