@@ -216,7 +216,7 @@ class WPHOp(torch.nn.Module):
         These classes are defined in Allys+2020 and Regaldo-Saint Blancard+2021.
         One can add custom WPH and scaling moments using extra_wph_moments and extra_scaling_moments parameters.
         The expected formats are:
-            - for extra_wph_moments: list of lists of 8 elements corresponding to [j1, theta1, p1, j2, theta2, p2, n, alpha]
+            - for extra_wph_moments: list of lists of 9 elements corresponding to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
             - for extra_scaling_moments: list of lists of 2 elements correponding to [j, p]
 
         Parameters
@@ -224,8 +224,8 @@ class WPHOp(torch.nn.Module):
         classes : str or list of str, optional
             Classes of WPH/scaling moments constituting the model. Possibilities are: "S11", "S00", "C00", "S01", "C01", "Cphase", "L".
             The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
-        extra_wph_moments : list of lists of length 7, optional
-            Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha]. The default is [].
+        extra_wph_moments : list of lists of length 9, optional
+            Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
             Format corresponds to [j, p]. The default is [].
         cross_moments : bool, optional
@@ -294,12 +294,23 @@ class WPHOp(torch.nn.Module):
                         dn_eff = min(self.J - 1 - j1, dn)
                         for n in range(dn_eff + 1):
                             if n == 0:
-                                wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0])
+                                wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0, 0])
                                 cnt += 1
                             else:
                                 for a in range(self.A): # Half of alpha angles is enough even for complex data
-                                    wph_indices.append([j1, t1, 1, j1, t1, 1, n, a])
+                                    wph_indices.append([j1, t1, 1, j1, t1, 1, n, a, 0])
                                     cnt += 1
+                    if self.cplx: # Pseudo S11 moments
+                        for t1 in range(self.L): # Only L because of the pi-periodicity of these moments
+                            dn_eff = min(self.J - 1 - j1, dn)
+                            for n in range(dn_eff + 1):
+                                if n == 0:
+                                    wph_indices.append([j1, t1, 1, j1, t1 + self.L, 1, n, 0, 1])
+                                    cnt += 1
+                                else:
+                                    for a in range(2*self.A): # Here we need the full set of alpha angles
+                                        wph_indices.append([j1, t1, 1, j1, t1 + self.L, 1, n, (a + self.A) % (2 * self.A), 1])
+                                        cnt += 1
                 self._moments_indices[0:] += cnt
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
@@ -307,11 +318,11 @@ class WPHOp(torch.nn.Module):
                         dn_eff = min(self.J - 1 - j1, dn)
                         for n in range(dn_eff + 1):
                             if n == 0:
-                                wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0])
+                                wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0, 0])
                                 cnt += 1
                             else:
                                 for a in range(self.A): # Half of alpha angles is enough even for complex data
-                                    wph_indices.append([j1, t1, 0, j1, t1, 0, n, a])
+                                    wph_indices.append([j1, t1, 0, j1, t1, 0, n, a, 0])
                                     cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "C00": # Non default moments
@@ -324,13 +335,13 @@ class WPHOp(torch.nn.Module):
                                 t2_range = range(t1 - dl, t1 + dl)
                             for t2 in t2_range:
                                 # No translation here by default
-                                wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 0, 0, 0])
+                                wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 0, 0, 0, 0])
                                 cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "S01":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range((1 + self.cplx) * self.L):
-                        wph_indices.append([j1, t1, 0, j1, t1, 1, 0, 0])
+                        wph_indices.append([j1, t1, 0, j1, t1, 1, 0, 0, 0])
                         cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "C01":
@@ -346,14 +357,14 @@ class WPHOp(torch.nn.Module):
                                     dn_eff = min(self.J - 1 - j2, dn)
                                     for n in range(dn_eff + 1):
                                         if n == 0:
-                                            wph_indices.append([j1, t1, 0, j2, t2, 1, n, 0])
+                                            wph_indices.append([j1, t1, 0, j2, t2, 1, n, 0, 0])
                                             cnt += 1
                                         else:
                                             for a in range(2 * self.A): # Factor 2 needed even for real data
-                                                wph_indices.append([j1, t1, 0, j2, t2, 1, n, a])
+                                                wph_indices.append([j1, t1, 0, j2, t2, 1, n, a, 0])
                                                 cnt += 1
                                 else:
-                                    wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 1, 0, 0])
+                                    wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 1, 0, 0, 0])
                                     cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "Cphase":
@@ -363,11 +374,11 @@ class WPHOp(torch.nn.Module):
                             dn_eff = min(self.J - 1 - j2, dn)
                             for n in range(dn_eff + 1):
                                 if n == 0:
-                                    wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, 0])
+                                    wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, 0, 0])
                                     cnt += 1
                                 else:
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
-                                        wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a])
+                                        wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a, 0])
                                         cnt += 1
                 self._moments_indices[3:] += cnt
             elif clas == "L":
@@ -750,8 +761,9 @@ class WPHOp(torch.nn.Module):
                 xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5]) # (..., P, M, N)
                 del xpsi2
                 
-            # Take the complex conjugate of xpsi2_k2
-            xpsi2_k2 = torch.conj(xpsi2_k2)
+            # Take the complex conjugate of xpsi2_k2 depending on the value of pseudo
+            indices_pseudo = torch.where(cov_indices[:, 8] == 0)[0]
+            xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
             
             # Potential padding
             if padding:
