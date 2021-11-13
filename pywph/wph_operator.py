@@ -490,7 +490,7 @@ class WPHOp(torch.nn.Module):
         
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40,
-                     precompute_wt=False, precompute_modwt=False):
+                     precompute_wt=False, precompute_modwt=False, cross=False):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -523,31 +523,65 @@ class WPHOp(torch.nn.Module):
         int
             Total number of chunks.
 
-        """
-        data = to_torch(data, device=self.device, precision=self.precision)
-        data_size = data.nelement() * data.element_size() * (1 + (not torch.is_complex(data))) # in bytes (assuming complex data)
-        if requires_grad and not data.requires_grad:
-            data.requires_grad = True
+        """            
         mem_avail = get_memory_available(self.device) # in bytes
         
-        # Precompute the wavelet transform if we have enough memory
-        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_wt:
-            #print("Enough memory to store the wavelet transform of input data.")
-            data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
-            data_wt_f = data_f * self.psi_f
-            del data_f
-            data_wt = ifft(data_wt_f)
-            del data_wt_f
-            self._tmp_data_wt = data_wt # We keep this variable in memory
-            mem_avail -= data_size * self.psi_f.shape[0]
+        def _preconfigure_data(data):
+            nonlocal mem_avail
+            
+            data = to_torch(data, device=self.device, precision=self.precision)
+            data_size = data.nelement() * data.element_size() * (1 + (not torch.is_complex(data))) # in bytes (assuming complex data)
+            if requires_grad and not data.requires_grad:
+                data.requires_grad = True
+            
+            _tmp_data_wt, _tmp_data_wt_mod = None, None
+            
+            # Precompute the wavelet transform if we have enough memory
+            if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_wt:
+                #print("Enough memory to store the wavelet transform of input data.")
+                data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                data_wt_f = data_f * self.psi_f
+                del data_f
+                data_wt = ifft(data_wt_f)
+                del data_wt_f
+                _tmp_data_wt = data_wt
+                mem_avail -= data_size * self.psi_f.shape[0]
+            
+            # Precompute the modulus of the wavelet transform if we have enough memory
+            if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_modwt and precompute_wt:
+                #print("Enough memory to store the modulus of the wavelet transform of input data.")
+                _tmp_data_wt_mod = torch.abs(self._tmp_data_wt)
+                mem_avail -= data_size * self.psi_f.shape[0]
+                
+            return data, _tmp_data_wt, _tmp_data_wt_mod, data_size
         
-        # Precompute the modulus of the wavelet transform if we have enough memory
-        if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_modwt and precompute_wt:
-            #print("Enough memory to store the modulus of the wavelet transform of input data.")
-            self._tmp_data_wt_mod = torch.abs(self._tmp_data_wt) # We keep this variable in memory
-            mem_avail -= data_size * self.psi_f.shape[0]
+        if not cross:
+            data, _tmp_data_wt, _tmp_data_wt_mod, data_size = _preconfigure_data(data)
+            if _tmp_data_wt is not None:
+                self._tmp_data_wt = _tmp_data_wt  # We keep this variable in memory
+            if _tmp_data_wt_mod is not None:
+                self._tmp_data_wt_mod = _tmp_data_wt_mod  # We keep this variable in memory
+                
+            req_grad = data.requires_grad
+        else:
+            if not isinstance(data, list):
+                raise Exception("When cross is True, data must be a list!")
+            data1, _tmp_data1_wt, _tmp_data1_wt_mod, _ = _preconfigure_data(data[0])
+            data2, _tmp_data2_wt, _tmp_data2_wt_mod, data_size = _preconfigure_data(data[1])
+            
+            if data1.shape != data2.shape:
+                raise Exception("data1 and data2 must be of same shape!")
+                
+            data = [data1, data2]
+            
+            if _tmp_data1_wt is not None or _tmp_data2_wt is not None:
+                self._tmp_data_wt = [_tmp_data1_wt, _tmp_data2_wt]
+            if _tmp_data1_wt_mod is not None or _tmp_data2_wt_mod is not None:
+                self._tmp_data_wt_mod = [_tmp_data1_wt_mod, _tmp_data2_wt_mod]
+                
+            req_grad = data1.requires_grad or data2.requires_grad
         
-        self._prepare_computation(data_size, mem_avail, mem_chunk_factor_grad if data.requires_grad else mem_chunk_factor)
+        self._prepare_computation(data_size, mem_avail, mem_chunk_factor_grad if req_grad else mem_chunk_factor)
         
         self.preconfigured = True
         
@@ -831,8 +865,145 @@ class WPHOp(torch.nn.Module):
             return cov, cov_chunk_shifted
         else: # Invalid
             raise Exception("Invalid chunk_id!")
+            
+    def _apply_cross_chunk(self, data1, data2, chunk_id, norm, padding):
+        """
+        Internal function. Use apply instead.
+        """
+        # Computation of the chunk of coefficients
+        if chunk_id < self.nb_chunks_wph: # WPH moments:
+            cov_chunk = self.wph_moments_chunk_list[chunk_id]
+            cov_indices = self.wph_moments_indices[cov_chunk]
+            
+            curr_psi_1_indices = self._psi_1_indices[cov_chunk]
+            curr_psi_2_indices = self._psi_2_indices[cov_chunk]
+            
+            def get_precomputed_data(psi_indices, p, i):
+                """
+                Internal function that load in memory relevant part of precomputed data (wavelet transform, or its modulus).
+                If the data was not precomputed, we first compute it.
+                """
+                data = data1 if i == 0 else data2
+                if p == 0: # We need the modulus
+                    if hasattr(self, '_tmp_data_wt_mod') and self._tmp_data_wt_mod[i] is not None:
+                        data_wt_mod = self._tmp_data_wt_mod[i]
+                        xpsi = torch.index_select(data_wt_mod, -3, psi_indices)
+                    else:
+                        if hasattr(self, '_tmp_data_wt') and self._tmp_data_wt[i] is not None:
+                            data_wt = self._tmp_data_wt[i]
+                            xpsi = torch.index_select(data_wt, -3, psi_indices)
+                        else:
+                            data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                            data_wt_f = data_f * self.psi_f[psi_indices]
+                            xpsi = ifft(data_wt_f)
+                            del data_f, data_wt_f
+                    return torch.abs(xpsi)
+                elif p == 1: # We just need the wavelet transform
+                    if hasattr(self, '_tmp_data_wt') and self._tmp_data_wt[i] is not None:
+                        data_wt = self._tmp_data_wt[i]
+                        xpsi = torch.index_select(data_wt, -3, psi_indices)
+                    else:
+                        data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+                        data_wt_f = data_f * self.psi_f[psi_indices]
+                        xpsi = ifft(data_wt_f)
+                        del data_f, data_wt_f
+                    return xpsi
+                else:
+                    raise Exception(f"Invalid p value: {p}!")
+            
+            if chunk_id < self.final_chunk_id_per_class[0]: # S11 moments
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 1, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1, 1) # (..., P, M, N)
+            elif chunk_id < self.final_chunk_id_per_class[1]: # S00 moments
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 0, 1) # (..., P, M, N)
+            elif chunk_id < self.final_chunk_id_per_class[2]: # S01/C01 moments
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1, 1) # (..., P, M, N)
+            elif chunk_id < self.final_chunk_id_per_class[3]: # Other moments
+                # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
+                xpsi1 = get_precomputed_data(curr_psi_1_indices, 1, 0) # (..., P, M, N)
+                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
+                del xpsi1
+                xpsi2 = get_precomputed_data(curr_psi_2_indices, 1, 1) # (..., P, M, N)
+                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5]) # (..., P, M, N)
+                del xpsi2
+                
+            # Take the complex conjugate of xpsi2_k2 depending on the value of pseudo
+            indices_pseudo = torch.where(cov_indices[:, 8] == 0)[0]
+            xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
+            
+            # Potential padding
+            if padding:
+                xpsi1_k1 = self._padding(xpsi1_k1)
+                xpsi2_k2 = self._padding(xpsi2_k2)
+            
+            # Normalization
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
+            
+            # Compute covariance
+            cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
+            del xpsi1_k1, xpsi2_k2
+            
+            return cov, cov_chunk
+        elif chunk_id < self.final_chunk_id_per_class[4]: # Scaling moments
+            cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]
+            cov_indices = self.scaling_moments_indices[cov_chunk]
+            
+            curr_phi_indices = self._phi_indices[cov_chunk]
+            
+            # Simple combination of data1 and data2 if scaling moments are demanded
+            data = torch.sqrt(data1 * data2)
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False):
+            # Separate real and imaginary parts of input data if complex data
+            if torch.is_complex(data):
+                cplx = True
+                data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
+                                       dtype=data.dtype, device=data.device) # (...,2, M, N)
+                data_new[..., 0, :, :] = data.real
+                data_new[..., 1, :, :] = data.imag
+                data_new = data_new.unsqueeze(-3) # (..., 2, 1, M, N)
+            else:
+                cplx = False
+                data_new = data.clone().unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, M, N)
+                
+            # Subtract the mean to avoid a bias due to a non-zero mean of the signal
+            data_new = self._sm_normalization_1(data_new, norm)
+            
+            # Convolution with scaling functions
+            data_f = fft(data_new)
+            data_st_f = data_f * self.phi_f[curr_phi_indices]  # (..., ?, P, M, N)
+            del data_new, data_f
+            data_st = ifft(data_st_f)
+            del data_st_f
+            
+            # Compute moments
+            data_st_p = power_harmonics(data_st, cov_indices[:, 1])
+            del data_st
+            
+            # Potential padding
+            if padding:
+                data_st_p = self._padding(data_st_p)
+            
+            # Normalization
+            data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
+            
+            # Compute covariance
+            data_st_p = torch.abs(data_st_p)
+            cov = torch.mean(data_st_p * data_st_p, (-1, -2))
+            cov = cov.view(cov.shape[:-2] + (cov.shape[-2]*cov.shape[-1],)) # (..., ?*P)
+            del data_st_p
+            
+            # For scaling moments, shift cov_chunk by the number of WPH moments
+            # There are subtleties related to the doubling of coefficients when applying to complex data
+            cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
+            if cplx:
+                cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
+            return cov, cov_chunk_shifted
+        else: # Invalid
+            raise Exception("Invalid chunk_id!")
+        
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False, cross=False):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -858,6 +1029,10 @@ class WPHOp(torch.nn.Module):
             The default is False.
         ret_wph_obj : bool, optional
             Return a WPH object if needed. The default is False.
+        cross : bool, optional
+            Estimate cross moments?
+            If True, data must be a list of two elements corresponding to the two involved maps.
+            The default is False.
 
         Returns
         -------
@@ -865,18 +1040,28 @@ class WPHOp(torch.nn.Module):
             WPH coefficients.
 
         """
+        if cross:
+            if not isinstance(data, list):
+                raise Exception("Please provide in data a list of two maps to estimate cross moments!")
+        
         if chunk_id is None: # Compute all chunks at once
-            data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad)
+            data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad, cross=cross)
             coeffs = []
             for i in range(self.nb_chunks):
-                cov, _ = self._apply_chunk(data, i, norm, padding)
+                if cross:
+                    cov, _ = self._apply_cross_chunk(data[0], data[1], i, norm, padding)
+                else:
+                    cov, _ = self._apply_chunk(data, i, norm, padding)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
             indices = torch.arange(coeffs.shape[-1])
         else: # Compute selected chunk
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
-            coeffs, indices = self._apply_chunk(data, chunk_id, norm, padding)
+            if cross:
+                coeffs, indices = self._apply_cross_chunk(data[0], data[1], chunk_id, norm, padding)
+            else:
+                coeffs, indices = self._apply_chunk(data, chunk_id, norm, padding)
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
@@ -897,8 +1082,8 @@ class WPHOp(torch.nn.Module):
         else:
             return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False, cross=False):
         """
         Alias of apply.
         """
-        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, ret_wph_obj=ret_wph_obj)
+        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, ret_wph_obj=ret_wph_obj, cross=cross)
