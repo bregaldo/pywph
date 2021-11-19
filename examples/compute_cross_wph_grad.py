@@ -22,7 +22,7 @@ data_torch, nb_chunks = wph_op.preconfigure([data1, data2], requires_grad=True, 
 coeffs = []
 for i in range(nb_chunks):
     print(f"{i}/{nb_chunks}")
-    coeffs_chunk = wph_op([data_torch[0], data_torch[1]], i, cross=True)
+    coeffs_chunk = wph_op(data_torch, i, cross=True)
     loss_chunk = (torch.absolute(coeffs_chunk) ** 2).sum()
     loss_chunk.backward(retain_graph=True)
     coeffs.append(coeffs_chunk.detach().cpu())

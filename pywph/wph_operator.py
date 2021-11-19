@@ -284,7 +284,7 @@ class WPHOp(torch.nn.Module):
             self.load_filters()
         
         # Moments and indices
-        self._moments_indices = np.array([0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00/C00, S01/C01, Cphase/extra, L
+        self._moments_indices = np.array([0, 0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00/C00, S01/C01, S10/C10, Cphase/extra, L
     
         for clas in classes:
             cnt = 0
@@ -367,6 +367,12 @@ class WPHOp(torch.nn.Module):
                                     wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 1, 0, 0, 0])
                                     cnt += 1
                 self._moments_indices[2:] += cnt
+            elif clas == "S10":
+                self._moments_indices[3:] += cnt
+                pass
+            elif clas == "C10":
+                self._moments_indices[3:] += cnt
+                pass
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
@@ -380,22 +386,22 @@ class WPHOp(torch.nn.Module):
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
                                         wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a, 0])
                                         cnt += 1
-                self._moments_indices[3:] += cnt
+                self._moments_indices[4:] += cnt
             elif clas == "L":
                 # Scaling moments
                 for j in range(max(self.j_min, 2), self.J - 1):
                     for p in p_list:
                         sm_indices.append([j, p])
                         cnt += 1
-                self._moments_indices[4:] += cnt
+                self._moments_indices[5:] += cnt
             else:
                 raise Exception(f"Unknown class of moments: {clas}")
         
         # Extra moments if provided
         wph_indices += extra_wph_moments
         sm_indices += extra_scaling_moments
-        self._moments_indices[3:] += len(extra_wph_moments)
-        self._moments_indices[4:] += len(extra_scaling_moments)
+        self._moments_indices[4:] += len(extra_wph_moments)
+        self._moments_indices[5:] += len(extra_scaling_moments)
 
         # Conversion to numpy arrays
         self.wph_moments_indices = np.array(wph_indices)
@@ -467,19 +473,19 @@ class WPHOp(torch.nn.Module):
         
         # Same for scaling moments
         cov_index = 0
-        while cov_index <= self._moments_indices[i] - self._moments_indices[3]:
-            if cov_index == self._moments_indices[i] - self._moments_indices[3]:
+        while cov_index <= self._moments_indices[i] - self._moments_indices[-2]:
+            if cov_index == self._moments_indices[i] - self._moments_indices[-2]:
                 self.final_chunk_id_per_class.append(chunks_cnt)
                 i += 1 # Next class of moments
                 if i == len(self._moments_indices):
                     break
             else:
-                if cov_index + self.nb_wph_cov_per_chunk <= self._moments_indices[i] - self._moments_indices[3]:
+                if cov_index + self.nb_wph_cov_per_chunk <= self._moments_indices[i] - self._moments_indices[-2]:
                     self.scaling_moments_chunk_list.append(torch.arange(cov_index, cov_index + self.nb_wph_cov_per_chunk).to(self.device))
                     cov_index += self.nb_wph_cov_per_chunk
                 else:
-                    self.scaling_moments_chunk_list.append(torch.arange(cov_index, self._moments_indices[i] - self._moments_indices[3]).to(self.device))
-                    cov_index += self._moments_indices[i] - self._moments_indices[3] - cov_index
+                    self.scaling_moments_chunk_list.append(torch.arange(cov_index, self._moments_indices[i] - self._moments_indices[-2]).to(self.device))
+                    cov_index += self._moments_indices[i] - self._moments_indices[-2] - cov_index
                 chunks_cnt += 1
         
         self.nb_chunks_wph = self.final_chunk_id_per_class[-2]
@@ -550,7 +556,7 @@ class WPHOp(torch.nn.Module):
             # Precompute the modulus of the wavelet transform if we have enough memory
             if data_size * self.psi_f.shape[0] < 1/4 * mem_avail and precompute_modwt and precompute_wt:
                 #print("Enough memory to store the modulus of the wavelet transform of input data.")
-                _tmp_data_wt_mod = torch.abs(self._tmp_data_wt)
+                _tmp_data_wt_mod = torch.abs(_tmp_data_wt)
                 mem_avail -= data_size * self.psi_f.shape[0]
                 
             return data, _tmp_data_wt, _tmp_data_wt_mod, data_size
@@ -786,7 +792,10 @@ class WPHOp(torch.nn.Module):
             elif chunk_id < self.final_chunk_id_per_class[2]: # S01/C01 moments
                 xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0) # (..., P, M, N)
                 xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1) # (..., P, M, N)
-            elif chunk_id < self.final_chunk_id_per_class[3]: # Other moments
+            elif chunk_id < self.final_chunk_id_per_class[3]: # S10/C10 moments
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 1) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 0) # (..., P, M, N)
+            elif chunk_id < self.final_chunk_id_per_class[4]: # Other moments
                 # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
                 xpsi1 = get_precomputed_data(curr_psi_1_indices, 1) # (..., P, M, N)
                 xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
@@ -812,8 +821,8 @@ class WPHOp(torch.nn.Module):
             del xpsi1_k1, xpsi2_k2
             
             return cov, cov_chunk
-        elif chunk_id < self.final_chunk_id_per_class[4]: # Scaling moments
-            cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]
+        elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
+            cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[-2]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
             
             curr_phi_indices = self._phi_indices[cov_chunk]
@@ -920,7 +929,10 @@ class WPHOp(torch.nn.Module):
             elif chunk_id < self.final_chunk_id_per_class[2]: # S01/C01 moments
                 xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 0, 0) # (..., P, M, N)
                 xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 1, 1) # (..., P, M, N)
-            elif chunk_id < self.final_chunk_id_per_class[3]: # Other moments
+            elif chunk_id < self.final_chunk_id_per_class[3]: # S10/C10 moments
+                xpsi1_k1 = get_precomputed_data(curr_psi_1_indices, 1, 0) # (..., P, M, N)
+                xpsi2_k2 = get_precomputed_data(curr_psi_2_indices, 0, 1) # (..., P, M, N)
+            elif chunk_id < self.final_chunk_id_per_class[4]: # Other moments
                 # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
                 xpsi1 = get_precomputed_data(curr_psi_1_indices, 1, 0) # (..., P, M, N)
                 xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
@@ -946,14 +958,14 @@ class WPHOp(torch.nn.Module):
             del xpsi1_k1, xpsi2_k2
             
             return cov, cov_chunk
-        elif chunk_id < self.final_chunk_id_per_class[4]: # Scaling moments
-            cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]
+        elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
+            cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[-2]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
             
             curr_phi_indices = self._phi_indices[cov_chunk]
             
             # Simple combination of data1 and data2 if scaling moments are demanded
-            data = torch.sqrt(data1 * data2)
+            data = torch.sqrt(torch.absolute(data1 * data2))
         
             # Separate real and imaginary parts of input data if complex data
             if torch.is_complex(data):

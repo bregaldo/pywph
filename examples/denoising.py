@@ -13,7 +13,7 @@ import pywph as pw
     Denoising example.
     
     We build a simulated noisy map d = s + n and attempt to retrieve s.
-    n is here a realization of Gaussian white noise.
+    n is here a realization of a Gaussian white noise.
     The signal-to-noise ratio SNR = s.std()/n.std() is a parameter.
     
     The denoising algorithm is a simplified version of that of Regaldo-Saint Blancard+2021.
