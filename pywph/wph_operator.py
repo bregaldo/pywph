@@ -434,12 +434,15 @@ class WPHOp(torch.nn.Module):
         self.nb_wph_moments = self.wph_moments_indices.shape[0]
         self.nb_scaling_moments = self.scaling_moments_indices.shape[0]
             
-    def _prepare_computation(self, data_size, mem_avail, mem_chunk_factor):
+    def _prepare_computation(self, data_size, mem_avail, mem_chunk_factor, nb_wph_cov_per_chunk=None):
         """
         Internal function.
         """
-        # Compute the number of chunks needed
-        self.nb_wph_cov_per_chunk = mem_avail // (mem_chunk_factor * data_size)
+        if nb_wph_cov_per_chunk is None:
+            # Compute the number of chunks needed
+            self.nb_wph_cov_per_chunk = mem_avail // (mem_chunk_factor * data_size)
+        else:
+            self.nb_wph_cov_per_chunk = nb_wph_cov_per_chunk
         if self.nb_wph_cov_per_chunk == 0:
             raise Exception("Error! Not enough memory on device.")
         
@@ -496,7 +499,8 @@ class WPHOp(torch.nn.Module):
         
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40,
-                     precompute_wt=False, precompute_modwt=False, cross=False):
+                     precompute_wt=False, precompute_modwt=False, cross=False,
+                     nb_wph_cov_per_chunk=None):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -521,6 +525,10 @@ class WPHOp(torch.nn.Module):
         precompute_modwt : bool, optional
             Do we precompute the modulust of the wavelet transform of input data ? (if enough memory is available)
             The default is True.
+        cross : bool, optional
+            The default is False.
+        nb_wph_cov_per_chunk : int, optional
+            The default is None.
 
         Returns
         -------
@@ -587,7 +595,7 @@ class WPHOp(torch.nn.Module):
                 
             req_grad = data1.requires_grad or data2.requires_grad
         
-        self._prepare_computation(data_size, mem_avail, mem_chunk_factor_grad if req_grad else mem_chunk_factor)
+        self._prepare_computation(data_size, mem_avail, mem_chunk_factor_grad if req_grad else mem_chunk_factor, nb_wph_cov_per_chunk=nb_wph_cov_per_chunk)
         
         self.preconfigured = True
         
