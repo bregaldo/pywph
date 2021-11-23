@@ -726,8 +726,35 @@ class WPHOp(torch.nn.Module):
         """
         self.norm_wph_means = None
         self.norm_wph_stds = None
-        self.norm_sm_means = None
+        self.norm_sm_means_1 = None
+        self.norm_sm_means_2 = None
         self.norm_sm_stds = None
+        
+    def get_normalization(self):
+        """
+        Get saved data for normalization of the coefficients.
+
+        Returns
+        -------
+        None.
+
+        """
+        return self.norm_wph_means, self.norm_wph_stds, self.norm_sm_means_1, self.norm_sm_means_2, self.norm_sm_stds
+    
+    def set_normalization(self, norm_wph_means, norm_wph_stds, norm_sm_means_1, norm_sm_means_2, norm_sm_stds):
+        """
+        Set normalization of the coefficients.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.norm_wph_means = norm_wph_means
+        self.norm_wph_stds = norm_wph_stds
+        self.norm_sm_means_1 = norm_sm_means_1
+        self.norm_sm_means_2 = norm_sm_means_2
+        self.norm_sm_stds = norm_sm_stds
     
     def _padding(self, data):
         """
