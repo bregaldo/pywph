@@ -285,10 +285,8 @@ class WPHOp(torch.nn.Module):
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
             dj = self.J - self.j_min - 1 # We consider all possible pair of scales j1 < j2
-        print(f"dj = {dj}")
         if dl is None:
             dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
-        print(f"dl = {dl}")
         reload_filters = False # We might need to reload the filters
         if dn is None:
             dn = self.dn
@@ -296,7 +294,6 @@ class WPHOp(torch.nn.Module):
             if dn > self.dn: # dn is larger than current value, we need to reload the filters
                 self.dn = dn
                 reload_filters = True
-        print(f"dn = {dn}")
         if A is None:
             A = self.A
         else:
@@ -337,11 +334,11 @@ class WPHOp(torch.nn.Module):
                             dn_eff = min(self.J - 1 - j1, dn)
                             for n in range(dn_eff + 1):
                                 if n == 0:
-                                    wph_indices.append([j1, t1, 1, j1, t1 + self.L, 1, n, 0, 1])
+                                    wph_indices.append([j1, t1, 1, j1, (t1 + self.L)  % (2*self.L), 1, n, 0, 1])
                                     cnt += 1
                                 else:
                                     for a in range(2*self.A): # Here we need the full set of alpha angles
-                                        wph_indices.append([j1, t1, 1, j1, t1 + self.L, 1, n, (a + self.A) % (2 * self.A), 1])
+                                        wph_indices.append([j1, t1, 1, j1, (t1 + self.L)  % (2*self.L), 1, n, (a + self.A) % (2 * self.A), 1])
                                         cnt += 1
                 self._moments_indices[0:] += cnt
             elif clas == "S00":
