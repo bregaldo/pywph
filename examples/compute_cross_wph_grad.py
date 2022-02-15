@@ -16,6 +16,7 @@ data1 = np.load('data/I_1.npy')[::2, ::2]
 data2 = np.load('data/I_2.npy')[::2, ::2]
 
 wph_op = pw.WPHOp(M, N, J, L=L, dn=dn, device=device)
+wph_op.load_model(cross_moments=True)
 
 # Compute the coefficients and the gradient of a final loss by accumulating the gradients of the chunks of the loss
 data_torch, nb_chunks = wph_op.preconfigure([data1, data2], requires_grad=True, cross=True) # Divide the computation into chunks

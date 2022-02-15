@@ -243,17 +243,41 @@ class WPHOp(torch.nn.Module):
         None.
 
         """
-        if cross_moments:
-            print("Warning! cross_moments not implemented yet.")
-            
         # Reordering of elements of classes
         if isinstance(classes, str): # Convert to list of str
             classes = [classes]
         classes_new = []
-        for clas in ["S11", "S00", "C00", "S01", "C01", "Cphase", "L"]:
+        for clas in ["S11", "S00", "C00", "S01", "C01", "S10", "C10", "Cphase", "Cphase_inv", "L"]:
             if clas in classes:
                 classes_new.append(clas)
         classes = classes_new
+        
+        # Symmetrize if cross_moments is True
+        if cross_moments:
+            cont = True
+            if "S01" in classes and "S10" not in classes:
+                classes += ["S10"]
+                cont = False
+            if "S10" in classes and "S01" not in classes:
+                classes += ["S01"]
+                cont = False
+            if "C01" in classes and "C10" not in classes:
+                classes += ["C10"]
+                cont = False
+            if "C10" in classes and "C01" not in classes:
+                classes += ["C01"]
+                cont = False
+            if "Cphase" in classes and "Cphase_inv" not in classes:
+                classes += ["Cphase_inv"]
+                cont = False
+            if "Cphase_inv" in classes and "Cphase" not in classes:
+                classes += ["Cphase"]
+                cont = False
+            if not cont: # Reload symmetrized model
+                self.load_model(classes, extra_wph_moments=extra_wph_moments,
+                                extra_scaling_moments=extra_scaling_moments, cross_moments=cross_moments,
+                                p_list=p_list, dj=dj, dl=dl, dn=dn, A=A)
+                return
         
         wph_indices = []
         sm_indices = []
@@ -297,11 +321,19 @@ class WPHOp(torch.nn.Module):
                                 wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0, 0])
                                 cnt += 1
                             else:
-                                for a in range(self.A): # Half of alpha angles is enough even for complex data
+                                if not cross_moments:
+                                    a_range = range(self.A) # Half of alpha angles is enough even for complex data
+                                else:
+                                    a_range = range(2 * self.A) # Factor 2 for cross-moments symmetry
+                                for a in a_range:
                                     wph_indices.append([j1, t1, 1, j1, t1, 1, n, a, 0])
                                     cnt += 1
                     if self.cplx: # Pseudo S11 moments
-                        for t1 in range(self.L): # Only L because of the pi-periodicity of these moments
+                        if not cross_moments:
+                            t1_range = range(self.L) # Only L because of the pi-periodicity of these moments
+                        else:
+                            t1_range = range(2 * self.L) # Factor 2 for cross-moments symmetry
+                        for t1 in t1_range:
                             dn_eff = min(self.J - 1 - j1, dn)
                             for n in range(dn_eff + 1):
                                 if n == 0:
@@ -321,7 +353,11 @@ class WPHOp(torch.nn.Module):
                                 wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0, 0])
                                 cnt += 1
                             else:
-                                for a in range(self.A): # Half of alpha angles is enough even for complex data
+                                if not cross_moments:
+                                    a_range = range(self.A) # Half of alpha angles is enough even for complex data
+                                else:
+                                    a_range = range(2 * self.A) # Factor 2 for cross-moments symmetry
+                                for a in a_range:
                                     wph_indices.append([j1, t1, 0, j1, t1, 0, n, a, 0])
                                     cnt += 1
                 self._moments_indices[1:] += cnt
@@ -368,11 +404,36 @@ class WPHOp(torch.nn.Module):
                                     cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "S10":
+                for j1 in range(self.j_min, self.J):
+                    for t1 in range((1 + self.cplx) * self.L):
+                        wph_indices.append([j1, t1, 1, j1, t1, 0, 0, 0, 0])
+                        cnt += 1
                 self._moments_indices[3:] += cnt
-                pass
             elif clas == "C10":
+                for j1 in range(self.j_min, self.J):
+                    for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
+                        for t1 in range((1 + self.cplx) * self.L):
+                            if self.cplx:
+                                t2_range = chain(range(t1 - dl, t1 + dl), range(t1 + self.L - dl, t1 + self.L + dl))
+                            else:
+                                t2_range = range(t1 - dl, t1 + dl)
+                            for t2 in t2_range:
+                                if t1 == t2:
+                                    dn_eff = min(self.J - 1 - j2, dn)
+                                    for n in range(dn_eff + 1):
+                                        if n == 0:
+                                            # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
+                                            wph_indices.append([j2, t2, 1, j1, t1, 0, n, 0, 0])
+                                            cnt += 1
+                                        else:
+                                            for a in range(2 * self.A): # Factor 2 needed even for real data
+                                                # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
+                                                wph_indices.append([j2, t2, 1, j1, t1, 0, n, a, 0])
+                                                cnt += 1
+                                else:
+                                    wph_indices.append([j2, t2 % ((1 + self.cplx) * self.L), 1, j1, t1, 0, 0, 0, 0])
+                                    cnt += 1
                 self._moments_indices[3:] += cnt
-                pass
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
@@ -385,6 +446,21 @@ class WPHOp(torch.nn.Module):
                                 else:
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
                                         wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a, 0])
+                                        cnt += 1
+                self._moments_indices[4:] += cnt
+            elif clas == "Cphase_inv":
+                for j1 in range(self.j_min, self.J):
+                    for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
+                        for t1 in range((1 + self.cplx) * self.L):
+                            dn_eff = min(self.J - 1 - j2, dn)
+                            for n in range(dn_eff + 1):
+                                if n == 0:
+                                    # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
+                                    wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n, 0, 0])
+                                    cnt += 1
+                                else:
+                                    for a in range(2 * self.A): # Factor 2 needed even for real data
+                                        wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n, a, 0])
                                         cnt += 1
                 self._moments_indices[4:] += cnt
             elif clas == "L":
@@ -411,7 +487,7 @@ class WPHOp(torch.nn.Module):
         self._psi_1_indices = []
         self._psi_2_indices = []
         for i in range(self.wph_moments_indices.shape[0]):
-            elt = self.wph_moments_indices[i] # [j1, t1, p1, j2, t2, p2, n, a]
+            elt = self.wph_moments_indices[i] # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
             n_tau = dn * (2 * self.A) + 1 # Number of translations per oriented scale
             self._psi_1_indices.append((elt[0] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[1]*n_tau)
             if elt[6] == 0: # n == 0

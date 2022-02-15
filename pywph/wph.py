@@ -149,6 +149,10 @@ class WPH:
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] == self.wph_coeffs_indices[:, 3]) # j1 == j2
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 0) # p1 == 0
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == 1) # p2 == 1
+            elif clas == "S10":
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] == self.wph_coeffs_indices[:, 3]) # j1 == j2
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 1) # p1 == 1
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == 0) # p2 == 0
             elif clas == "C00":
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] != self.wph_coeffs_indices[:, 3]) # j1 != j2
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 0) # p1 == 0
@@ -157,9 +161,18 @@ class WPH:
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] != self.wph_coeffs_indices[:, 3]) # j1 != j2
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 0) # p1 == 0
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == 1) # p2 == 1
-            elif clas == "Cphase": # Cphase and all extra moments with p1 = 1 and j1 != j2
+            elif clas == "C10":
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] != self.wph_coeffs_indices[:, 3]) # j1 != j2
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 1) # p1 == 1
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == 0) # p2 == 0
+            elif clas == "Cphase": # Cphase and all extra moments with p1 = 1, p2 != 0 and j1 != j2
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] != self.wph_coeffs_indices[:, 3]) # j1 != j2
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] == 1) # p1 == 1
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] != 0) # p2 != 0
+            elif clas == "Cphase_inv": # Cphase and all extra moments with p1 != 0, p2 == 1 and j1 != j2
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] != self.wph_coeffs_indices[:, 3]) # j1 != j2
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 2] != 0) # p1 != 0
+                filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 5] == 1) # p2 == 1
             elif clas == "":
                 pass
             else:
