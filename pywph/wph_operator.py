@@ -77,8 +77,8 @@ class WPHOp(torch.nn.Module):
         
         self.load_model()
         
-        self.lp_filter_cls = GaussianFilter
-        self.bp_filter_cls = BumpSteerableWavelet
+        self.lp_filter_cls = lp_filter_cls
+        self.bp_filter_cls = bp_filter_cls
         self.load_filters()
         
         self.preconfigured = False # Precomputation configuration
