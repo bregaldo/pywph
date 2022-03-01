@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import multiprocessing as mp
 from itertools import chain
+from itertools import product
 from functools import partial
 
 from .filters import GaussianFilter, BumpSteerableWavelet
@@ -13,16 +14,10 @@ from .wph import WPH
 
 
 # Internal function for the parallel pre-building of the bandpass filters (see WPHOp.load_filters)
-def _build_bp_para(theta_list, bp_filter_cls, M, N, j, L, k0, dn, A):
-    ret = []
-    for theta in theta_list:
-        for n in range(dn + 1):
-            if n == 0:
-                ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, fourier=True).data)
-            else:
-                for alpha in range(2 * A):
-                    # Consistent with Tanguys'code (3*n instead of n)
-                    ret.append(bp_filter_cls(M, N, j, theta*np.pi/L, k0=k0, L=L, n=3*n, alpha=alpha*np.pi/A, fourier=True).data)
+def _build_bp_para(work_list, bp_filter_cls, M, N, L, k0):
+    ret = np.zeros((work_list.shape[0], M, N), dtype=complex)
+    for i in range(work_list.shape[0]):
+            ret[i] = bp_filter_cls(M, N, float(work_list[i, 0]), work_list[i, 1]*np.pi/L, k0=k0, L=L, fourier=True).data
     return ret
 
 
@@ -63,6 +58,10 @@ class WPHOp(torch.nn.Module):
         A : int, optional
             Number of azimuthal steps on [0, \pi[ for the discretization of the \alpha variable.  The default is 4.
             Default value leads to the following set of values for \alpha: {0, \pi/4, \pi/2, 3\pi/4, \pi, -3\pi/4, -\pi/2, -\pi/4}.
+        precision : str, optional
+            Float precision of torch tensors. Can be either "single" or "double". The default is "single".
+        device : str or int, optional
+            Torch default device (cpu or gpu). The default is "cpu".
 
         Returns
         -------
@@ -74,9 +73,17 @@ class WPHOp(torch.nn.Module):
         self.dn, self.A = dn, A
         self.precision = precision
         self.device = device
+
+        # Padding parameters (in 2^J unit)
+        self.padding_x_param = 1 / 2 # corresponds to a padding of 2^(J-1)
+        self.padding_y_param = 1 / 2 # corresponds to a padding of 2^(J-1)
+        self.padding_x = int(self.padding_x_param * 2 ** self.J)
+        self.padding_y = int(self.padding_y_param * 2 ** self.J)
+        if 2 * self.padding_y >= self.M or 2 * self.padding_x >= self.N:
+            raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
         
+        # Load default model and build filters
         self.load_model()
-        
         self.lp_filter_cls = lp_filter_cls
         self.bp_filter_cls = bp_filter_cls
         self.load_filters()
@@ -89,10 +96,6 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means_1 = None
         self.norm_sm_means_2 = None
         self.norm_sm_stds = None
-        
-        # Padding parameters (in 2^J unit)
-        self.padding_x_param = 1 / 2 # corresponds to a padding of 2^(J-1)
-        self.padding_y_param = 1 / 2 # corresponds to a padding of 2^(J-1)
         
     def to(self, device):
         """
@@ -119,6 +122,12 @@ class WPHOp(torch.nn.Module):
             self.scaling_moments_indices = self.scaling_moments_indices.to(device)
             self._psi_1_indices = self._psi_1_indices.to(device)
             self._psi_2_indices = self._psi_2_indices.to(device)
+            self._harmo_indices = self._harmo_indices.to(device)
+            self._pseudo_indices = self._pseudo_indices.to(device)
+            self._id_cov_indices = self._id_cov_indices.to(device)
+            self._translation_pos = self._translation_pos.to(device)
+            self._translation_weight = self._translation_weight.to(device)
+            self._phi_indices = self._phi_indices.to(device)
             
             if self.norm_wph_means is not None:
                 self.norm_wph_means = self.norm_wph_means.to(device)
@@ -147,63 +156,107 @@ class WPHOp(torch.nn.Module):
         None.
 
         """
-        self.psi_f = [] # Bandpass filters (in Fourier space)
-        self.psi_indices = [] # Bandpass filters indices
-        self.phi_f = [] # Low-pass filters (in Fourier space)
-        self.phi_indices = [] # Low-pass filters indices
+        ### BUILD PSI FILTERS
+
+        nb_psi = (self.J - self.j_min) * (self.L * (1 + self.cplx))
+        self.psi_f = np.zeros((nb_psi, self.M, self.N), dtype=complex) # Bandpass filters (in Fourier space)
+        self.psi_indices = np.array(list(product(range(self.j_min, self.J),
+                                    range(self.L * (1 + self.cplx)))), dtype=int) # Bandpass filters indices
         
         # Filter parameters
         k0 = 0.85 * np.pi                              # Central wavenumber of the mother wavelet
         sigma0 = 1 / (0.496 * np.power(2, -0.55) * k0) # Std of the mother scaling function
+
+        # Parallel computation of psi filters
+        build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=self.bp_filter_cls,
+                                    M=self.M, N=self.N, L=self.L, k0=k0)
+        nb_processes = min(os.cpu_count(), self.psi_indices.shape[0])
+        work_list = np.array_split(self.psi_indices, nb_processes)
+        pool = mp.Pool(processes=nb_processes)
+        results = pool.map(build_bp_para_loc, work_list)
+        cnt = 0
+        for i in range(len(results)):
+            self.psi_f[cnt: cnt + results[i].shape[0]] = results[i]
+            cnt += results[i].shape[0]
+        pool.close()
         
-        # Build psi filters
-        for j in range(self.j_min, self.J):
-            # Parallel pre-build
-            build_bp_para_loc = partial(_build_bp_para, bp_filter_cls=self.bp_filter_cls,
-                                        M=self.M, N=self.N, j=j, L=self.L,
-                                        k0=k0, dn=self.dn, A=self.A)
-            work = np.arange(self.L * (1 + self.cplx))
-            nb_processes = min(os.cpu_count(), len(work))
-            work_list = np.array_split(work, nb_processes)
-            pool = mp.Pool(processes=nb_processes) # "Spawn" context for macOS compatibility
-            results = pool.map(build_bp_para_loc, work_list)
-            bp_filters = []
-            for i in range(len(results)):
-                bp_filters += results[i]
-            pool.close()
-            
-            # We save the filters in a list
-            nb_filters_per_theta = 2 * self.A * self.dn + 1
-            for theta in range(self.L * (1 + self.cplx)):
-                bp_list = bp_filters[theta * nb_filters_per_theta: (theta + 1) * nb_filters_per_theta]
-                index = 0
-                for n in range(self.dn + 1):
-                    if n == 0:
-                        self.psi_f.append(bp_list[index])
-                        self.psi_indices.append([j, theta, n, 0])
-                        index += 1
-                    else:
-                        for alpha_id in range(2 * self.A):
-                            self.psi_f.append(bp_list[index])
-                            self.psi_indices.append([j, theta, n, alpha_id])
-                            index += 1
-        
-        # Build phi filters if needed (automatic check of the model)
+        ### BUILD PHI FILTERS
+
         if len(self.scaling_moments_indices) != 0:
             j_min = min(self.scaling_moments_indices[:, 0])
             j_max = max(self.scaling_moments_indices[:, 0])
-            for j in range(j_min, j_max + 1):
+            nb_phi = j_max - j_min + 1
+        else:
+            nb_phi = 0 # No phi filter needed
+
+        self.phi_f = np.zeros((nb_phi, self.M, self.N), dtype=np.complex) # Low-pass filters (in Fourier space)
+        self.phi_indices = np.zeros(nb_phi, dtype=int) # Low-pass filters indices
+
+        # Build phi filters if needed (automatic check of the model)
+        if len(self.scaling_moments_indices) != 0:
+            for ind, j in enumerate(range(j_min, j_max + 1)):
                 g = self.lp_filter_cls(self.M, self.N, j, sigma0=sigma0, fourier=True).data
-                self.phi_f.append(g)
-                self.phi_indices.append(j)
-        
-        # Convert indices to numpy arrays
-        self.psi_indices = np.array(self.psi_indices)
-        self.phi_indices = np.array(self.phi_indices)
+                self.phi_f[ind] = g
+                self.phi_indices[ind] = j
+
         
         # Convert filters to torch tensors
         self.psi_f = to_torch(self.psi_f, device=self.device, precision=self.precision)
         self.phi_f = to_torch(self.phi_f, device=self.device, precision=self.precision)
+
+    def _get_translations_matrices(self):
+        """
+        Internal function used for the discretization of the tau variable in the definition of the WPH moments.
+
+        tau variable is discretized thanks to the polar coordinates (n, a) such that
+            tau_x = 3n*2^j*cos(theta*pi/L - alpha*pi/A)
+            tau_y = 3n*2^j*sin(theta*pi/L - alpha*pi/A)
+
+        This function returns a translation and a weighting matrix.
+        The translation matrix gives the cartesian coordinates of tau for each (j, theta, n, a).
+        The weighting matrix contains a normalization correction of the coefficients required when using padding.
+        This corresponds to the ratio between the intersection of two padded maps with a relative shift of tau and the size of the maps.
+
+        Parameters
+        ----------
+        None.
+
+        Returns
+        -------
+        translation_mat : array of size (J-j_min, (1+cplx)*L, dn+1, 2*A, 2)
+            Cartesian coordinates (tau_x, tau_x) for each (j, theta, n, a).
+        weight_mat : array of size (J-j_min, (1+cplx)*L, dn+1, 2*A)
+            Weighting matrix for the normalization of the WPH coefficients when using padding.
+        """
+        r_factor = 3 # Radial step size factor for translations
+
+        # Build the translation matrix
+        translation_mat  = np.zeros((self.J - self.j_min, self.L * (1 + self.cplx), self.dn + 1, 2 * self.A, 2), dtype=int)
+        for j in range(self.j_min, self.J):
+            for t in range(self.L * (1 + self.cplx)):
+                for n in range(self.dn + 1):
+                    for a in range(2 * self.A):
+                        theta = t * np.pi/self.L
+                        alpha = a * np.pi/self.A
+                        translation_mat[j, t, n, a, 0] = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)) # Round to the nearest integer
+                        translation_mat[j, t, n, a, 1] = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)) # Round to the nearest integer
+
+        # Build the weight map
+        # We need to take into account the non-periodic boundary conditions here
+        M_padded = self.M + max(0, self.M - 3*self.padding_y)
+        N_padded = self.N + max(0, self.N - 3*self.padding_x)
+        pad_data = np.zeros((M_padded, N_padded))
+        pad_data[self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x] = 1
+        weight_map = (np.fft.ifft2(np.fft.fft2(pad_data) * np.conjugate(np.fft.fft2(pad_data))) / (self.M * self.N)).real
+        # Compute the weighting vector
+        translation_vec = np.reshape(translation_mat, (-1, 2))
+        weight_vec = np.zeros((translation_vec.shape[0]))
+        for i in range(translation_vec.shape[0]):
+            weight_vec[i] = weight_map[translation_vec[i, 0], translation_vec[i, 1]]
+        # Reshape to form the weighting matrix
+        weight_mat = np.reshape(weight_vec, translation_mat[..., 0].shape) ** -1
+
+        return translation_mat, weight_mat
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
@@ -222,16 +275,24 @@ class WPHOp(torch.nn.Module):
         Parameters
         ----------
         classes : str or list of str, optional
-            Classes of WPH/scaling moments constituting the model. Possibilities are: "S11", "S00", "C00", "S01", "C01", "Cphase", "L".
+            Classes of WPH/scaling moments constituting the model. Possibilities are: "S11", "S00", "C00", "S01", "S10", "C01", "C10", "Cphase", "Cphase_inv", "L".
             The default is ["S11", "S00", "S01", "C01", "Cphase", "L"].
         extra_wph_moments : list of lists of length 9, optional
             Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
             Format corresponds to [j, p]. The default is [].
         cross_moments : bool, optional
-            For cross moments (to be implemented). The default is False.
+            Adapt the model for the computation of cross statistics. This ensures that cross statistics of (x, y) remain the same as those of (y, x), as well as preventing redundancy in the coefficients. The default is False.
         p_list : list of int, optional
             For scaling moments ("L"), list of moments to compute for each low-pass filter.
+        dj : int, optional
+            Maximum delta j for coefficients quantifying interactions between scales. The default is None, corresponding to J - j_min - 1.
+        dl : int, optional
+            Maximum delta theta for coefficients quantifying interactions between scales. The default is None, corresponding to L/2.
+        dn : int, optional
+            \Delta_n parameter. Number of radial steps for the discretization of the \tau variable. The default is None, leaving previous dn parameter unchanged.
+        A : int, optional
+            Number of azimuthal steps on [0, \pi[ for the discretization of the \alpha variable. The default is None, leaving previous A parameter unchanged.
             
         Raises
         ------
@@ -279,33 +340,25 @@ class WPHOp(torch.nn.Module):
                                 p_list=p_list, dj=dj, dl=dl, dn=dn, A=A)
                 return
         
-        wph_indices = []
-        sm_indices = []
+        wph_indices = [] # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
+        sm_indices = [] # [j, p]
         
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
             dj = self.J - self.j_min - 1 # We consider all possible pair of scales j1 < j2
         if dl is None:
             dl = self.L // 2 # For C01 moments, we consider |t1 - t2| <= pi / 2
-        reload_filters = False # We might need to reload the filters
         if dn is None:
             dn = self.dn
         else:
-            if dn > self.dn: # dn is larger than current value, we need to reload the filters
-                self.dn = dn
-                reload_filters = True
+            self.dn = dn
         if A is None:
             A = self.A
         else:
-            if A != self.A: # A is different than the current value, we need to reload the filters
-                self.A = A
-                reload_filters = True
-        if reload_filters:
-            print("dn or A parameters demand to rebuild filters...")
-            self.load_filters()
+            self.A = A
         
         # Moments and indices
-        self._moments_indices = np.array([0, 0, 0, 0, 0, 0]) # End indices delimiting the classes of moments: S11, S00/C00, S01/C01, S10/C10, Cphase/extra, L
+        self._moments_indices = np.array([0, 0, 0, 0, 0, 0]) # End indices delimiting the classes of covariances: S11, S00/C00, S01/C01, S10/C10, Cphase/extra, L
     
         for clas in classes:
             cnt = 0
@@ -316,7 +369,6 @@ class WPHOp(torch.nn.Module):
                         for n in range(dn_eff + 1):
                             if n == 0:
                                 wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0, 0])
-                                cnt += 1
                             else:
                                 if not cross_moments:
                                     a_range = range(self.A) # Half of alpha angles is enough even for complex data
@@ -324,7 +376,7 @@ class WPHOp(torch.nn.Module):
                                     a_range = range(2 * self.A) # Factor 2 for cross-moments symmetry
                                 for a in a_range:
                                     wph_indices.append([j1, t1, 1, j1, t1, 1, n, a, 0])
-                                    cnt += 1
+                        cnt += 1
                     if self.cplx: # Pseudo S11 moments
                         if not cross_moments:
                             t1_range = range(self.L) # Only L because of the pi-periodicity of these moments
@@ -335,11 +387,10 @@ class WPHOp(torch.nn.Module):
                             for n in range(dn_eff + 1):
                                 if n == 0:
                                     wph_indices.append([j1, t1, 1, j1, (t1 + self.L)  % (2*self.L), 1, n, 0, 1])
-                                    cnt += 1
                                 else:
                                     for a in range(2*self.A): # Here we need the full set of alpha angles
                                         wph_indices.append([j1, t1, 1, j1, (t1 + self.L)  % (2*self.L), 1, n, (a + self.A) % (2 * self.A), 1])
-                                        cnt += 1
+                            cnt += 1
                 self._moments_indices[0:] += cnt
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
@@ -348,7 +399,6 @@ class WPHOp(torch.nn.Module):
                         for n in range(dn_eff + 1):
                             if n == 0:
                                 wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0, 0])
-                                cnt += 1
                             else:
                                 if not cross_moments:
                                     a_range = range(self.A) # Half of alpha angles is enough even for complex data
@@ -356,7 +406,7 @@ class WPHOp(torch.nn.Module):
                                     a_range = range(2 * self.A) # Factor 2 for cross-moments symmetry
                                 for a in a_range:
                                     wph_indices.append([j1, t1, 0, j1, t1, 0, n, a, 0])
-                                    cnt += 1
+                        cnt += 1
                 self._moments_indices[1:] += cnt
             elif clas == "C00": # Non default moments
                 for j1 in range(self.j_min, self.J):
@@ -391,14 +441,12 @@ class WPHOp(torch.nn.Module):
                                     for n in range(dn_eff + 1):
                                         if n == 0:
                                             wph_indices.append([j1, t1, 0, j2, t2, 1, n, 0, 0])
-                                            cnt += 1
                                         else:
                                             for a in range(2 * self.A): # Factor 2 needed even for real data
                                                 wph_indices.append([j1, t1, 0, j2, t2, 1, n, a, 0])
-                                                cnt += 1
                                 else:
                                     wph_indices.append([j1, t1, 0, j2, t2 % ((1 + self.cplx) * self.L), 1, 0, 0, 0])
-                                    cnt += 1
+                                cnt += 1
                 self._moments_indices[2:] += cnt
             elif clas == "S10":
                 for j1 in range(self.j_min, self.J):
@@ -419,17 +467,13 @@ class WPHOp(torch.nn.Module):
                                     dn_eff = min(self.J - 1 - j2, dn)
                                     for n in range(dn_eff + 1):
                                         if n == 0:
-                                            # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
-                                            wph_indices.append([j2, t2, 1, j1, t1, 0, n, 0, 0])
-                                            cnt += 1
+                                            wph_indices.append([j2, t2, 1, j1, t1, 0, 2 ** (j2 - j1) * n, 0, 0])
                                         else:
                                             for a in range(2 * self.A): # Factor 2 needed even for real data
-                                                # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
-                                                wph_indices.append([j2, t2, 1, j1, t1, 0, n, a, 0])
-                                                cnt += 1
+                                                wph_indices.append([j2, t2, 1, j1, t1, 0, 2 ** (j2 - j1) * n, a, 0])
                                 else:
                                     wph_indices.append([j2, t2 % ((1 + self.cplx) * self.L), 1, j1, t1, 0, 0, 0, 0])
-                                    cnt += 1
+                                cnt += 1
                 self._moments_indices[3:] += cnt
             elif clas == "Cphase":
                 for j1 in range(self.j_min, self.J):
@@ -439,11 +483,10 @@ class WPHOp(torch.nn.Module):
                             for n in range(dn_eff + 1):
                                 if n == 0:
                                     wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, 0, 0])
-                                    cnt += 1
                                 else:
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
                                         wph_indices.append([j1, t1, 1, j2, t1, 2 ** (j2 - j1), n, a, 0])
-                                        cnt += 1
+                            cnt += 1
                 self._moments_indices[4:] += cnt
             elif clas == "Cphase_inv":
                 for j1 in range(self.j_min, self.J):
@@ -453,12 +496,11 @@ class WPHOp(torch.nn.Module):
                             for n in range(dn_eff + 1):
                                 if n == 0:
                                     # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
-                                    wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n, 0, 0])
-                                    cnt += 1
+                                    wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, 2 ** (j2 - j1) * n, 0, 0])
                                 else:
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
-                                        wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n, a, 0])
-                                        cnt += 1
+                                        wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, 2 ** (j2 - j1) * n, a, 0])
+                            cnt += 1
                 self._moments_indices[4:] += cnt
             elif clas == "L":
                 # Scaling moments
@@ -473,7 +515,7 @@ class WPHOp(torch.nn.Module):
         # Extra moments if provided
         wph_indices += extra_wph_moments
         sm_indices += extra_scaling_moments
-        self._moments_indices[4:] += len(extra_wph_moments)
+        #self._moments_indices[4:] += len(extra_wph_moments) -> needs to be taken care below
         self._moments_indices[5:] += len(extra_scaling_moments)
 
         # Conversion to numpy arrays
@@ -481,19 +523,41 @@ class WPHOp(torch.nn.Module):
         self.scaling_moments_indices = np.array(sm_indices)
         
         # WPH moments preparation
-        self._psi_1_indices = []
-        self._psi_2_indices = []
+        # nb_cov: the number of covariances, that is the number of distinct values (j1, t1, p1, j2, t2, p2)
+        # nb_wph: the number of WPH coefficients, that is the number of distinct values (j1, t1, p1, j2, t2, p2, n, a, pseudo)
+        self._psi_1_indices = [] # (nb_cov) : id associated to (j1, t1)
+        self._psi_2_indices = [] # (nb_cov) : id associated to (j2, t2)
+        self._harmo_indices = [] # (nb_cov, 2) : (p1, p2)
+        self._pseudo_indices = [] # (nb_cov)
+        self._id_cov_indices = [] # (nb_wph) : mapping of nb_wph in nb_cov
+        self._translation_pos = [] # (nb_wph, 2) : (tx, ty) position of translations
+        self._translation_weight = [] # (nb_wph) : weight for each translation (for padding purposes)
+        translation_mat, translation_matweight = self._get_translations_matrices()
+        id_cov = -1
+        curr_cov = []
         for i in range(self.wph_moments_indices.shape[0]):
-            elt = self.wph_moments_indices[i] # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
-            n_tau = dn * (2 * self.A) + 1 # Number of translations per oriented scale
-            self._psi_1_indices.append((elt[0] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[1]*n_tau)
-            if elt[6] == 0: # n == 0
-                self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau)
-            else: # n != 0
-                self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L * n_tau) + elt[4]*n_tau + (elt[6] - 1)*(2 * self.A) + elt[7] + 1)
+            elt = list(self.wph_moments_indices[i]) # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
+            if elt[:6] + elt[8:] != curr_cov:
+                curr_cov = elt[:6] + elt[8:]
+                id_cov += 1
+                self._psi_1_indices.append((elt[0] - self.j_min)*((1 + self.cplx) * self.L) + elt[1])
+                self._psi_2_indices.append((elt[3] - self.j_min)*((1 + self.cplx) * self.L) + elt[4])
+                self._harmo_indices.append([elt[2], elt[5]])
+                self._pseudo_indices.append(elt[8])
+                if i >= self.wph_moments_indices.shape[0] - len(extra_wph_moments): # _moments_indices for extra_wph_moments is incremented for each new value of (j1, t1, p1, j2, t2, p2)
+                    self._moments_indices[4:] += 1
+            self._id_cov_indices.append(id_cov)
+            self._translation_pos.append([translation_mat[elt[3] - self.j_min, elt[4], elt[6], elt[7], 0], translation_mat[elt[3] - self.j_min, elt[4], elt[6], elt[7], 1]])
+            self._translation_weight.append(translation_matweight[elt[3] - self.j_min, elt[4], elt[6], elt[7]])
+        
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
         self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device, torch.long)
         self._psi_2_indices = torch.from_numpy(np.array(self._psi_2_indices)).to(self.device, torch.long)
+        self._harmo_indices = torch.from_numpy(np.array(self._harmo_indices)).to(self.device, torch.long)
+        self._pseudo_indices = torch.from_numpy(np.array(self._pseudo_indices)).to(self.device, torch.long)
+        self._id_cov_indices = torch.from_numpy(np.array(self._id_cov_indices)).to(self.device, torch.long)
+        self._translation_pos = torch.from_numpy(np.array(self._translation_pos)).to(self.device, torch.long)
+        self._translation_weight = torch.from_numpy(np.array(self._translation_weight)).to(self.device, torch.float)
         
         # Scaling moments preparation
         self._phi_indices = []
@@ -504,6 +568,7 @@ class WPHOp(torch.nn.Module):
         self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device, torch.long)
         
         # Useful variables
+        self.nb_wph_cov = self._psi_1_indices.shape[0]
         self.nb_wph_moments = self.wph_moments_indices.shape[0]
         self.nb_scaling_moments = self.scaling_moments_indices.shape[0]
             
@@ -692,15 +757,15 @@ class WPHOp(torch.nn.Module):
         
         self.preconfigured = False
     
-    def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk):
+    def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk, padding_mode):
         """
         Internal function for the normalization of WPH moments.
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
             if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.nb_wph_moments: # If self.norm_wph_means is not complete
-                mean1 = torch.mean(xpsi1_k1.detach(), (-1, -2), keepdim=True)
-                mean2 = torch.mean(xpsi2_k2.detach(), (-1, -2), keepdim=True)
+                mean1 = torch.mean(self._padding(xpsi1_k1.detach(), padding_mode), (-1, -2), keepdim=True)
+                mean2 = torch.mean(self._padding(xpsi2_k2.detach(), padding_mode), (-1, -2), keepdim=True)
                 means = torch.stack((mean1, mean2), dim=-1)
                 if self.norm_wph_means is None:
                     self.norm_wph_means = means
@@ -716,8 +781,8 @@ class WPHOp(torch.nn.Module):
             
             # Compute or retrieve (approximate) stds
             if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_moments:  # If self.norm_wph_stds is not complete
-                std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
-                std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                std1 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi1_k1.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi2_k2.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
                 
                 std1[std1 == 0] = 1.0 # To avoid division by zero
                 std2[std2 == 0] = 1.0 # To avoid division by zero
@@ -736,8 +801,8 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2 /= std2
         else: # No normalization
             # Substract the mean
-            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
-            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+            xpsi1_k1 -= torch.mean(self._padding(xpsi1_k1, padding_mode), (-1, -2), keepdim=True)
+            xpsi2_k2 -= torch.mean(self._padding(xpsi2_k2, padding_mode), (-1, -2), keepdim=True)
         return xpsi1_k1, xpsi2_k2
     
     def _sm_normalization_1(self, data_new, norm):
@@ -837,15 +902,22 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means_2 = norm_sm_means_2
         self.norm_sm_stds = norm_sm_stds
     
-    def _padding(self, data):
+    def _padding(self, data, mode):
         """
             Internal function for padding.
         """
-        padding_x = int(self.padding_x_param * 2 ** self.J)
-        padding_y = int(self.padding_y_param * 2 ** self.J)
-        if 2 * padding_y >= self.M or 2 * padding_x >= self.N:
-            raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
-        return data[..., padding_y:-padding_y, padding_x:-padding_x]
+        if mode == "select":
+            return data[..., self.padding_y:-self.padding_y, self.padding_x:-self.padding_x]
+        elif mode == "zeros":
+            # For information:
+            # M_padded = self.M + max(0, self.M - 3*self.padding_y)
+            # N_padded = self.N + max(0, self.N - 3*self.padding_x)
+            pad_data = torch.nn.functional.pad(data[..., self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x], (self.padding_x, self.N - 2*self.padding_x, self.padding_y, self.M - 2*self.padding_y))
+            return data # (..., M_padded, N_padded)
+        elif mode is None:
+            return data
+        else:
+            raise Exception(f"Invalid padding mode: {mode}!")
     
     def _apply_chunk(self, data, chunk_id, norm, padding):
         """
@@ -853,11 +925,15 @@ class WPHOp(torch.nn.Module):
         """
         # Computation of the chunk of coefficients
         if chunk_id < self.nb_chunks_wph: # WPH moments:
-            cov_chunk = self.wph_moments_chunk_list[chunk_id]
-            cov_indices = self.wph_moments_indices[cov_chunk]
-            
-            curr_psi_1_indices = self._psi_1_indices[cov_chunk]
-            curr_psi_2_indices = self._psi_2_indices[cov_chunk]
+            cov_chunk = self.wph_moments_chunk_list[chunk_id] # list id (nb_cov_chunk)
+            wph_chunk = torch.nonzero(torch.logical_and(self._id_cov_indices >= cov_chunk[0], self._id_cov_indices <= cov_chunk[-1]))[:, 0] # (nb_wph_chunk)
+
+            curr_id_cov_indices =  self._id_cov_indices[wph_chunk] # (nb_wph_chunk)
+            curr_psi_1_indices = self._psi_1_indices[cov_chunk] # (nb_cov_chunk) : id associated to (j1, t1)
+            curr_psi_2_indices = self._psi_2_indices[cov_chunk] # (nb_cov_chunk) : id associated to (j2, t2)
+            curr_harmo_indices = self._harmo_indices[cov_chunk] # (nb_cov_chunk, 2) : (p1, p2)
+            curr_pseudo_indices = self._pseudo_indices[cov_chunk] # (nb_cov_chunk) : pseudo
+            curr_translation_pos = self._translation_pos[wph_chunk] # (nb_wph_chunk, 2) : (tx, ty) position for translations
             
             def get_precomputed_data(psi_indices, p):
                 """
@@ -906,27 +982,34 @@ class WPHOp(torch.nn.Module):
             elif chunk_id < self.final_chunk_id_per_class[4]: # Other moments
                 # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
                 xpsi1 = get_precomputed_data(curr_psi_1_indices, 1) # (..., P, M, N)
-                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
+                xpsi1_k1 = phase_harmonics(xpsi1, curr_harmo_indices[:, 0]) # (..., P, M, N)
                 del xpsi1
                 xpsi2 = get_precomputed_data(curr_psi_2_indices, 1) # (..., P, M, N)
-                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5]) # (..., P, M, N)
+                xpsi2_k2 = phase_harmonics(xpsi2, curr_harmo_indices[:, 1]) # (..., P, M, N)
                 del xpsi2
-                
+
             # Take the complex conjugate of xpsi2_k2 depending on the value of pseudo
-            indices_pseudo = torch.where(cov_indices[:, 8] == 0)[0]
+            indices_pseudo = torch.where(curr_pseudo_indices == 1)[0]
             xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
             
+            # Normalization
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk, "select" if padding else None)
+
             # Potential padding
             if padding:
-                xpsi1_k1 = self._padding(xpsi1_k1)
-                xpsi2_k2 = self._padding(xpsi2_k2)
-            
-            # Normalization
-            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
-            
-            # Compute covariance
-            cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
+                xpsi1_k1 = self._padding(xpsi1_k1, "zeros")
+                xpsi2_k2 = self._padding(xpsi2_k2, "zeros")
+
+            # Compute covariance with translation with a convolution
+            cov = ifft(fft(xpsi1_k1) * torch.conj(fft(xpsi2_k2))) / self.M / self.N #  (..., nb_cov_chunk, M, N)
             del xpsi1_k1, xpsi2_k2
+
+            # Select the different translations
+            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 0], curr_translation_pos[:, 1]] # (..., nb_wph_chunk)
+            
+            # Normalisation if padding
+            if padding:
+                cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
             return cov, cov_chunk
         elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
@@ -963,7 +1046,7 @@ class WPHOp(torch.nn.Module):
             
             # Potential padding
             if padding:
-                data_st_p = self._padding(data_st_p)
+                data_st_p = self._padding(data_st_p, "select")
             
             # Normalization
             data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
@@ -989,11 +1072,15 @@ class WPHOp(torch.nn.Module):
         """
         # Computation of the chunk of coefficients
         if chunk_id < self.nb_chunks_wph: # WPH moments:
-            cov_chunk = self.wph_moments_chunk_list[chunk_id]
-            cov_indices = self.wph_moments_indices[cov_chunk]
-            
-            curr_psi_1_indices = self._psi_1_indices[cov_chunk]
-            curr_psi_2_indices = self._psi_2_indices[cov_chunk]
+            cov_chunk = self.wph_moments_chunk_list[chunk_id] # list id (nb_cov_chunk)
+            wph_chunk = torch.nonzero(torch.logical_and(self._id_cov_indices >= cov_chunk[0], self._id_cov_indices <= cov_chunk[-1]))[:, 0] # (nb_wph_chunk)
+
+            curr_id_cov_indices =  self._id_cov_indices[wph_chunk] # (nb_wph_chunk)
+            curr_psi_1_indices = self._psi_1_indices[cov_chunk] # (nb_cov_chunk) : id associated to (j1, t1)
+            curr_psi_2_indices = self._psi_2_indices[cov_chunk] # (nb_cov_chunk) : id associated to (j2, t2)
+            curr_harmo_indices = self._harmo_indices[cov_chunk] # (nb_cov_chunk, 2) : (p1, p2)
+            curr_pseudo_indices = self._pseudo_indices[cov_chunk] # (nb_cov_chunk) : pseudo
+            curr_translation_pos = self._translation_pos[wph_chunk] # (nb_wph_chunk, 2) : (tx, ty) position for translations
             
             def get_precomputed_data(psi_indices, p, i):
                 """
@@ -1043,27 +1130,34 @@ class WPHOp(torch.nn.Module):
             elif chunk_id < self.final_chunk_id_per_class[4]: # Other moments
                 # Get the relevant part of the wavelet transform and compute the corresponding phase harmonics
                 xpsi1 = get_precomputed_data(curr_psi_1_indices, 1, 0) # (..., P, M, N)
-                xpsi1_k1 = phase_harmonics(xpsi1, cov_indices[:, 2]) # (..., P, M, N)
+                xpsi1_k1 = phase_harmonics(xpsi1, curr_harmo_indices[:, 0]) # (..., P, M, N)
                 del xpsi1
                 xpsi2 = get_precomputed_data(curr_psi_2_indices, 1, 1) # (..., P, M, N)
-                xpsi2_k2 = phase_harmonics(xpsi2, cov_indices[:, 5]) # (..., P, M, N)
+                xpsi2_k2 = phase_harmonics(xpsi2, curr_harmo_indices[:, 1]) # (..., P, M, N)
                 del xpsi2
                 
             # Take the complex conjugate of xpsi2_k2 depending on the value of pseudo
-            indices_pseudo = torch.where(cov_indices[:, 8] == 0)[0]
+            indices_pseudo = torch.where(curr_pseudo_indices == 1)[0]
             xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
-            
+
+            # Normalization
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk, "select" if padding else None)
+
             # Potential padding
             if padding:
-                xpsi1_k1 = self._padding(xpsi1_k1)
-                xpsi2_k2 = self._padding(xpsi2_k2)
+                xpsi1_k1 = self._padding(xpsi1_k1, "zeros")
+                xpsi2_k2 = self._padding(xpsi2_k2, "zeros")
             
-            # Normalization
-            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
-            
-            # Compute covariance
-            cov = torch.mean(xpsi1_k1 * xpsi2_k2, (-1, -2))
+            # Compute covariance with translation with a convolution
+            cov = ifft(fft(xpsi1_k1) * torch.conj(fft(xpsi2_k2))) / self.M / self.N #  (..., nb_cov_chunk, M, N)
             del xpsi1_k1, xpsi2_k2
+
+            # Select the different translations
+            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 0], curr_translation_pos[:, 1]] # (..., nb_wph_chunk)
+            
+            # Normalisation if padding
+            if padding:
+                cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
             return cov, cov_chunk
         elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
@@ -1103,7 +1197,7 @@ class WPHOp(torch.nn.Module):
             
             # Potential padding
             if padding:
-                data_st_p = self._padding(data_st_p)
+                data_st_p = self._padding(data_st_p, "select")
             
             # Normalization
             data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
