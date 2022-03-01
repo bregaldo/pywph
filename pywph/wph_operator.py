@@ -748,7 +748,7 @@ class WPHOp(torch.nn.Module):
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
-            if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.nb_wph_moments: # If self.norm_wph_means is not complete
+            if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.nb_wph_cov: # If self.norm_wph_means is not complete
                 mean1 = torch.mean(self._padding(xpsi1_k1.detach(), padding_mode), (-1, -2), keepdim=True)
                 mean2 = torch.mean(self._padding(xpsi2_k2.detach(), padding_mode), (-1, -2), keepdim=True)
                 means = torch.stack((mean1, mean2), dim=-1)
@@ -765,7 +765,7 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2 -= mean2.to(xpsi2_k2.dtype) # Consistent dtype needed
             
             # Compute or retrieve (approximate) stds
-            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_moments:  # If self.norm_wph_stds is not complete
+            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_cov:  # If self.norm_wph_stds is not complete
                 std1 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi1_k1.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
                 std2 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi2_k2.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
                 
@@ -1270,9 +1270,10 @@ class WPHOp(torch.nn.Module):
             if chunk_id is None:
                 return WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L, A=self.A)
             else:
-                if chunk_id < self.nb_wph_moments:
-                    cov_indices = self.wph_moments_indices[self.wph_moments_chunk_list[chunk_id]]
-                    return WPH(coeffs, cov_indices, J=self.J, L=self.L, A=self.A)
+                if chunk_id < self.nb_chunks_wph:
+                    cov_chunk = self.wph_moments_chunk_list[chunk_id]
+                    wph_chunk_indices = torch.nonzero(torch.logical_and(self._id_cov_indices >= cov_chunk[0], self._id_cov_indices <= cov_chunk[-1]))[:, 0] # (nb_wph_chunk)
+                    return WPH(coeffs, wph_chunk_indices, J=self.J, L=self.L, A=self.A)
                 else:
                     cov_indices = self.scaling_moments_indices[self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]]
                 return WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L, A=self.A)
