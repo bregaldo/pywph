@@ -81,6 +81,12 @@ class WPHOp(torch.nn.Module):
         self.padding_y = int(self.padding_y_param * 2 ** self.J)
         if 2 * self.padding_y >= self.M or 2 * self.padding_x >= self.N:
             raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
+        # Build a weight map to weight the coefficients in order to take into account the non-periodic boundary conditions
+        M_padded = self.M + max(0, self.M - 3*self.padding_y)
+        N_padded = self.N + max(0, self.N - 3*self.padding_x)
+        pad_data = np.zeros((M_padded, N_padded))
+        pad_data[self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x] = 1
+        self._translation_weight_map = (np.fft.ifft2(np.fft.fft2(pad_data) * np.conjugate(np.fft.fft2(pad_data))) / (self.M * self.N)).real
         
         # Load default model and build filters
         self.load_model()
@@ -204,7 +210,7 @@ class WPHOp(torch.nn.Module):
         self.psi_f = to_torch(self.psi_f, device=self.device, precision=self.precision)
         self.phi_f = to_torch(self.phi_f, device=self.device, precision=self.precision)
 
-    def _get_translations_matrices(self):
+    def _get_translations_params(self, j, t, n, a):
         """
         Internal function used for the discretization of the tau variable in the definition of the WPH moments.
 
@@ -212,52 +218,30 @@ class WPHOp(torch.nn.Module):
             tau_x = 3n*2^j*cos(theta*pi/L - alpha*pi/A)
             tau_y = 3n*2^j*sin(theta*pi/L - alpha*pi/A)
 
-        This function returns a translation and a weighting matrix.
-        The translation matrix gives the cartesian coordinates of tau for each (j, theta, n, a).
-        The weighting matrix contains a normalization correction of the coefficients required when using padding.
-        This corresponds to the ratio between the intersection of two padded maps with a relative shift of tau and the size of the maps.
-
         Parameters
         ----------
-        None.
+        j : int
+            j index.
+        t : int
+            t index.
+        n : int
+            n index.
+        a : int
+            a index.
 
         Returns
         -------
-        translation_mat : array of size (J-j_min, (1+cplx)*L, dn+1, 2*A, 2)
-            Cartesian coordinates (tau_x, tau_x) for each (j, theta, n, a).
-        weight_mat : array of size (J-j_min, (1+cplx)*L, dn+1, 2*A)
-            Weighting matrix for the normalization of the WPH coefficients when using padding.
+        list of two ints
+            [tau_x, tau_y] coordinates
+        float
+            Weighting factor used when padding=True for the correct normalization of the WPH coefficients.
         """
         r_factor = 3 # Radial step size factor for translations
-
-        # Build the translation matrix
-        translation_mat  = np.zeros((self.J - self.j_min, self.L * (1 + self.cplx), self.dn + 1, 2 * self.A, 2), dtype=int)
-        for j in range(self.j_min, self.J):
-            for t in range(self.L * (1 + self.cplx)):
-                dn_eff = min(self.J - 1 - j, self.dn)
-                for n in range(dn_eff + 1):
-                    for a in range(2 * self.A):
-                        theta = t * np.pi/self.L
-                        alpha = a * np.pi/self.A
-                        translation_mat[j, t, n, a, 0] = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)) # Round to the nearest integer
-                        translation_mat[j, t, n, a, 1] = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)) # Round to the nearest integer
-
-        # Build the weight map
-        # We need to take into account the non-periodic boundary conditions here
-        M_padded = self.M + max(0, self.M - 3*self.padding_y)
-        N_padded = self.N + max(0, self.N - 3*self.padding_x)
-        pad_data = np.zeros((M_padded, N_padded))
-        pad_data[self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x] = 1
-        weight_map = (np.fft.ifft2(np.fft.fft2(pad_data) * np.conjugate(np.fft.fft2(pad_data))) / (self.M * self.N)).real
-        # Compute the weighting vector
-        translation_vec = np.reshape(translation_mat, (-1, 2))
-        weight_vec = np.zeros((translation_vec.shape[0]))
-        for i in range(translation_vec.shape[0]):
-            weight_vec[i] = weight_map[translation_vec[i, 0], translation_vec[i, 1]]
-        # Reshape to form the weighting matrix
-        weight_mat = np.reshape(weight_vec, translation_mat[..., 0].shape) ** -1
-
-        return translation_mat, weight_mat
+        theta = t * np.pi/self.L
+        alpha = a * np.pi/self.A
+        tx = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
+        ty = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
+        return [tx, ty], self._translation_weight_map[tx, ty] ** -1
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
@@ -533,7 +517,6 @@ class WPHOp(torch.nn.Module):
         self._id_cov_indices = [] # (nb_wph) : mapping of nb_wph in nb_cov
         self._translation_pos = [] # (nb_wph, 2) : (tx, ty) position of translations
         self._translation_weight = [] # (nb_wph) : weight for each translation (for padding purposes)
-        translation_mat, translation_matweight = self._get_translations_matrices()
         id_cov = -1
         curr_cov = []
         for i in range(self.wph_moments_indices.shape[0]):
@@ -548,8 +531,9 @@ class WPHOp(torch.nn.Module):
                 if i >= self.wph_moments_indices.shape[0] - len(extra_wph_moments): # _moments_indices for extra_wph_moments is incremented for each new value of (j1, t1, p1, j2, t2, p2)
                     self._moments_indices[4:] += 1
             self._id_cov_indices.append(id_cov)
-            self._translation_pos.append([translation_mat[elt[3] - self.j_min, elt[4], elt[6], elt[7], 0], translation_mat[elt[3] - self.j_min, elt[4], elt[6], elt[7], 1]])
-            self._translation_weight.append(translation_matweight[elt[3] - self.j_min, elt[4], elt[6], elt[7]])
+            trans_pos, trans_weight = self._get_translations_params(elt[3], elt[4], elt[6], elt[7])
+            self._translation_pos.append(trans_pos)
+            self._translation_weight.append(trans_weight)
         
         self.wph_moments_indices = torch.from_numpy(self.wph_moments_indices).to(self.device)
         self._psi_1_indices = torch.from_numpy(np.array(self._psi_1_indices)).to(self.device, torch.long)
