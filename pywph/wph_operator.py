@@ -234,7 +234,8 @@ class WPHOp(torch.nn.Module):
         translation_mat  = np.zeros((self.J - self.j_min, self.L * (1 + self.cplx), self.dn + 1, 2 * self.A, 2), dtype=int)
         for j in range(self.j_min, self.J):
             for t in range(self.L * (1 + self.cplx)):
-                for n in range(self.dn + 1):
+                dn_eff = min(self.J - 1 - j, self.dn)
+                for n in range(dn_eff + 1):
                     for a in range(2 * self.A):
                         theta = t * np.pi/self.L
                         alpha = a * np.pi/self.A
@@ -1011,7 +1012,7 @@ class WPHOp(torch.nn.Module):
             if padding:
                 cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
-            return cov, cov_chunk
+            return cov, wph_chunk
         elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
             cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[-2]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
@@ -1159,7 +1160,7 @@ class WPHOp(torch.nn.Module):
             if padding:
                 cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
-            return cov, cov_chunk
+            return cov, wph_chunk
         elif chunk_id < self.final_chunk_id_per_class[5]: # Scaling moments
             cov_chunk = self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[-2]]
             cov_indices = self.scaling_moments_indices[cov_chunk]
