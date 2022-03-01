@@ -638,7 +638,7 @@ class WPHOp(torch.nn.Module):
         
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40,
-                     precompute_wt=False, precompute_modwt=False, cross=False,
+                     precompute_wt=True, precompute_modwt=True, cross=False,
                      nb_wph_cov_per_chunk=None):
         """
         Preconfiguration before the WPH computation:
