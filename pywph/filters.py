@@ -10,10 +10,10 @@ class Filter:
         Base class for filters.
     """
     
-    def __init__(self, M, N):
+    def __init__(self, M, N, dtype=np.complex):
         self.M = M
         self.N = N
-        self.data = np.zeros((M, N), np.complex)
+        self.data = np.zeros((M, N), dtype)
         self.type = self.__class__.__name__
 
 
@@ -48,14 +48,14 @@ class GaussianFilter (Filter):
         None.
 
         """
-        super().__init__(M, N)
-        self.data = np.zeros((M, N)) # No need for a complex data type
+        self.fourier = fourier
+        self.real = True # A Gaussian filter is always real (both in Fourier and physical space)
+        super().__init__(M, N, dtype=np.float) # No need for a complex data type
         self.j = j
         self.theta = theta
         self.gamma = gamma
         self.sigma0 = sigma0
         self.sigma = self.sigma0 * 2 ** j
-        self.fourier = fourier
         self.build()
         
     def build(self):
@@ -76,7 +76,7 @@ class GaussianFilter (Filter):
         normFactor = 2 * np.pi * self.sigma ** 2 / self.gamma
         self.data /= normFactor
         if self.fourier:
-            self.data = np.fft.fft2(self.data)
+            self.data = np.fft.fft2(self.data).real
 
 
 class BumpSteerableWavelet (Filter):
@@ -114,14 +114,15 @@ class BumpSteerableWavelet (Filter):
         None.
 
         """
-        super().__init__(M, N)
+        self.fourier = fourier
+        self.real = fourier and (n == 0) # Real filter in Fourier space when no translation
+        super().__init__(M, N, dtype=np.float if self.real else np.complex)
         self.theta = theta
         self.sigma = 2 ** j
         self.k0 = k0
         self.L = L
         self.nx = n * np.cos(self.theta - alpha)
         self.ny = n * np.sin(self.theta - alpha)
-        self.fourier = fourier
         self.build()
     
     def _periodization(self, filter_f):
@@ -168,7 +169,7 @@ class BumpSteerableWavelet (Filter):
         psi_f = psi_f * np.exp(-1j * self.sigma * (k2d_x*self.nx + k2d_y*self.ny)) # Translation of the filter
         psi_f = self._periodization(psi_f)
         if self.fourier:
-            self.data = psi_f
+            self.data = psi_f.real if self.nx == 0 and self.ny == 0 else psi_f
         else:
             self.data = np.fft.ifft2(psi_f)
 
@@ -209,13 +210,14 @@ class BumpIsotropicWavelet (Filter):
         None.
 
         """
-        super().__init__(M, N)
+        self.fourier = fourier
+        self.real = True if not self.fourier else n == 0  # Filter is always real in physical space, and this is the case in Fourier space when no translation
+        super().__init__(M, N, dtype=np.float) # No need for a complex data type
         self.theta = theta
         self.sigma = 2 ** j
         self.k0 = k0
         self.nx = n * np.cos(self.theta - alpha)
         self.ny = n * np.sin(self.theta - alpha)
-        self.fourier = fourier
         self.build()
     
     def _periodization(self, filter_f):
@@ -251,7 +253,6 @@ class BumpIsotropicWavelet (Filter):
         k2d_x, k2d_y = np.meshgrid(kx, ky)
         k2d = k2d_x + 1j*k2d_y
         k2d_mod = np.absolute(k2d)
-        k2d_angle = np.angle(k2d)
         
         # Bump-steerable wavelet
         car_k_0_2xi = np.logical_and(k2d_mod > 0.0, k2d_mod < 2*xi).astype(float) # To avoid error and/or warning
@@ -260,6 +261,6 @@ class BumpIsotropicWavelet (Filter):
         psi_f = psi_f * np.exp(-1j * self.sigma * (k2d_x*self.nx + k2d_y*self.ny)) # Translation of the filter
         psi_f = self._periodization(psi_f)
         if self.fourier:
-            self.data = psi_f
+            self.data = psi_f.real if self.nx == 0 and self.ny == 0 else psi_f
         else:
-            self.data = np.fft.ifft2(psi_f)
+            self.data = np.fft.ifft2(psi_f).real

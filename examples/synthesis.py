@@ -51,7 +51,7 @@ print(f"Done! (in {time.time() - start_time}s)")
 
 print("Computing stats of target image...")
 start_time = time.time()
-coeffs = wph_op.apply(data, norm=norm, padding=not pbc)
+coeffs = wph_op.apply(data, norm=norm, pbc=pbc)
 print(f"Done! (in {time.time() - start_time}s)")
 
 

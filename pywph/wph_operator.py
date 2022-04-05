@@ -8,14 +8,17 @@ from itertools import chain
 from itertools import product
 from functools import partial
 
-from .filters import GaussianFilter, BumpSteerableWavelet
+from .filters import BumpIsotropicWavelet, GaussianFilter, BumpSteerableWavelet
 from .utils import to_torch, get_memory_available, fft, ifft, phase_harmonics, power_harmonics
 from .wph import WPH
 
 
+# List of filters that should be contained in complex-valued arrays (in Fourier space)
+complex_filters = []
+
 # Internal function for the parallel pre-building of the bandpass filters (see WPHOp.load_filters)
 def _build_bp_para(work_list, bp_filter_cls, M, N, L, k0):
-    ret = np.zeros((work_list.shape[0], M, N), dtype=complex)
+    ret = np.zeros((work_list.shape[0], M, N), dtype=complex if bp_filter_cls in complex_filters else float)
     for i in range(work_list.shape[0]):
             ret[i] = bp_filter_cls(M, N, float(work_list[i, 0]), work_list[i, 1]*np.pi/L, k0=k0, L=L, fourier=True).data
     return ret
@@ -29,6 +32,7 @@ class WPHOp(torch.nn.Module):
     def __init__(self, M, N, J, L=8, cplx=False,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
                  j_min=0, dn=0, A=4,
+                 cut_x_param=1/2, cut_y_param=1/2,
                  precision="single", device="cpu"):
         """
         Constructor.
@@ -58,6 +62,9 @@ class WPHOp(torch.nn.Module):
         A : int, optional
             Number of azimuthal steps on [0, \pi[ for the discretization of the \alpha variable.  The default is 4.
             Default value leads to the following set of values for \alpha: {0, \pi/4, \pi/2, 3\pi/4, \pi, -3\pi/4, -\pi/2, -\pi/4}.
+        cut_x_param, cut_y_param : float, optional
+            Cutting parameters when dealing with data with non periodic boundary conditions. Unit is a factor of 2^J pixels.
+            The default is 1/2, conrresponding to a padding of 2^(J-1).
         precision : str, optional
             Float precision of torch tensors. Can be either "single" or "double". The default is "single".
         device : str or int, optional
@@ -74,18 +81,17 @@ class WPHOp(torch.nn.Module):
         self.precision = precision
         self.device = device
 
-        # Padding parameters (in 2^J unit)
-        self.padding_x_param = 1 / 2 # corresponds to a padding of 2^(J-1)
-        self.padding_y_param = 1 / 2 # corresponds to a padding of 2^(J-1)
-        self.padding_x = int(self.padding_x_param * 2 ** self.J)
-        self.padding_y = int(self.padding_y_param * 2 ** self.J)
-        if 2 * self.padding_y >= self.M or 2 * self.padding_x >= self.N:
-            raise Exception("Invalid padding configuration! Lower padding_x_param/padding_y_param attributes.")
+        # Cutting parameters (in 2^J unit)
+        self.cut_x_param = cut_x_param
+        self.cut_y_param = cut_y_param
+
         # Build a weight map to weight the coefficients in order to take into account the non-periodic boundary conditions
-        M_padded = self.M + max(0, self.M - 3*self.padding_y)
-        N_padded = self.N + max(0, self.N - 3*self.padding_x)
+        cut_x = int(self.cut_x_param * 2 ** self.J)
+        cut_y = int(self.cut_y_param * 2 ** self.J)
+        M_padded = 2*(self.M - 2*cut_y)
+        N_padded = 2*(self.N - 2*cut_x)
         pad_data = np.zeros((M_padded, N_padded))
-        pad_data[self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x] = 1
+        pad_data[:M_padded // 2,:N_padded // 2] = 1
         self._translation_weight_map = (np.fft.ifft2(np.fft.fft2(pad_data) * np.conjugate(np.fft.fft2(pad_data))) / (self.M * self.N)).real
         
         # Load default model and build filters
@@ -163,9 +169,8 @@ class WPHOp(torch.nn.Module):
 
         """
         ### BUILD PSI FILTERS
-
         nb_psi = (self.J - self.j_min) * (self.L * (1 + self.cplx))
-        self.psi_f = np.zeros((nb_psi, self.M, self.N), dtype=complex) # Bandpass filters (in Fourier space)
+        self.psi_f = np.zeros((nb_psi, self.M, self.N), dtype=complex if self.bp_filter_cls in complex_filters else float) # Bandpass filters (in Fourier space)
         self.psi_indices = np.array(list(product(range(self.j_min, self.J),
                                     range(self.L * (1 + self.cplx)))), dtype=int) # Bandpass filters indices
         
@@ -195,7 +200,7 @@ class WPHOp(torch.nn.Module):
         else:
             nb_phi = 0 # No phi filter needed
 
-        self.phi_f = np.zeros((nb_phi, self.M, self.N), dtype=np.complex) # Low-pass filters (in Fourier space)
+        self.phi_f = np.zeros((nb_phi, self.M, self.N), dtype=complex if self.lp_filter_cls in complex_filters else float) # Low-pass filters (in Fourier space)
         self.phi_indices = np.zeros(nb_phi, dtype=int) # Low-pass filters indices
 
         # Build phi filters if needed (automatic check of the model)
@@ -234,14 +239,14 @@ class WPHOp(torch.nn.Module):
         list of two ints
             [tau_x, tau_y] coordinates
         float
-            Weighting factor used when padding=True for the correct normalization of the WPH coefficients.
+            Weighting factor used when pbc=False for the correct normalization of the WPH coefficients.
         """
         r_factor = 3 # Radial step size factor for translations
         theta = t * np.pi/self.L
         alpha = a * np.pi/self.A
-        tx = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
-        ty = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
-        return [tx, ty], self._translation_weight_map[tx, ty] ** -1
+        tx = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
+        ty = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
+        return [tx, ty], 1 / self._translation_weight_map[ty, tx]
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
@@ -517,6 +522,8 @@ class WPHOp(torch.nn.Module):
         self._id_cov_indices = [] # (nb_wph) : mapping of nb_wph in nb_cov
         self._translation_pos = [] # (nb_wph, 2) : (tx, ty) position of translations
         self._translation_weight = [] # (nb_wph) : weight for each translation (for padding purposes)
+        self.max_tx = 0 # For padding
+        self.max_ty = 0 # For padding
         id_cov = -1
         curr_cov = []
         for i in range(self.wph_moments_indices.shape[0]):
@@ -532,6 +539,8 @@ class WPHOp(torch.nn.Module):
                     self._moments_indices[4:] += 1
             self._id_cov_indices.append(id_cov)
             trans_pos, trans_weight = self._get_translations_params(elt[3], elt[4], elt[6], elt[7])
+            self.max_tx = max(abs(trans_pos[0]), self.max_tx)
+            self.max_ty = max(abs(trans_pos[1]), self.max_ty)
             self._translation_pos.append(trans_pos)
             self._translation_weight.append(trans_weight)
         
@@ -623,7 +632,7 @@ class WPHOp(torch.nn.Module):
     def preconfigure(self, data, requires_grad=False,
                      mem_chunk_factor=25, mem_chunk_factor_grad=40,
                      precompute_wt=True, precompute_modwt=True, cross=False,
-                     nb_wph_cov_per_chunk=None):
+                     nb_wph_cov_per_chunk=None, pbc=True):
         """
         Preconfiguration before the WPH computation:
             - cast input data to the relevant torch tensor type
@@ -680,6 +689,7 @@ class WPHOp(torch.nn.Module):
                 data_wt_f = data_f * self.psi_f
                 del data_f
                 data_wt = ifft(data_wt_f)
+                if not pbc: data_wt = self._cutting(data_wt) # Cutting if no periodic bounday conditions
                 del data_wt_f
                 _tmp_data_wt = data_wt
                 mem_avail -= data_size * self.psi_f.shape[0]
@@ -742,15 +752,15 @@ class WPHOp(torch.nn.Module):
         
         self.preconfigured = False
     
-    def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk, padding_mode):
+    def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk):
         """
         Internal function for the normalization of WPH moments.
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
             if self.norm_wph_means is None or self.norm_wph_means.shape[-4] != self.nb_wph_cov: # If self.norm_wph_means is not complete
-                mean1 = torch.mean(self._padding(xpsi1_k1.detach(), padding_mode), (-1, -2), keepdim=True)
-                mean2 = torch.mean(self._padding(xpsi2_k2.detach(), padding_mode), (-1, -2), keepdim=True)
+                mean1 = torch.mean(xpsi1_k1.detach(), (-1, -2), keepdim=True)
+                mean2 = torch.mean(xpsi2_k2.detach(), (-1, -2), keepdim=True)
                 means = torch.stack((mean1, mean2), dim=-1)
                 if self.norm_wph_means is None:
                     self.norm_wph_means = means
@@ -766,8 +776,8 @@ class WPHOp(torch.nn.Module):
             
             # Compute or retrieve (approximate) stds
             if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_cov:  # If self.norm_wph_stds is not complete
-                std1 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi1_k1.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
-                std2 = torch.sqrt(torch.mean(torch.abs(self._padding(xpsi2_k2.detach(), padding_mode)) ** 2, (-1, -2), keepdim=True))
+                std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
                 
                 std1[std1 == 0] = 1.0 # To avoid division by zero
                 std2[std2 == 0] = 1.0 # To avoid division by zero
@@ -786,8 +796,8 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2 /= std2
         else: # No normalization
             # Substract the mean
-            xpsi1_k1 -= torch.mean(self._padding(xpsi1_k1, padding_mode), (-1, -2), keepdim=True)
-            xpsi2_k2 -= torch.mean(self._padding(xpsi2_k2, padding_mode), (-1, -2), keepdim=True)
+            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
         return xpsi1_k1, xpsi2_k2
     
     def _sm_normalization_1(self, data_new, norm):
@@ -886,25 +896,33 @@ class WPHOp(torch.nn.Module):
         self.norm_sm_means_1 = norm_sm_means_1
         self.norm_sm_means_2 = norm_sm_means_2
         self.norm_sm_stds = norm_sm_stds
+
+    def _cutting(self, data):
+        """
+            Internal function for cutting.
+        """
+        cut_x = int(self.cut_x_param * 2 ** self.J)
+        cut_y = int(self.cut_y_param * 2 ** self.J)
+        if 2 * cut_y >= self.M or 2 * cut_x >= self.N:
+            raise Exception("Invalid cutting configuration! Lower cut_x_param/cut_y_param attributes.")
+        return data[..., cut_y:-cut_y, cut_x:-cut_x]
     
     def _padding(self, data, mode):
         """
             Internal function for padding.
         """
-        if mode == "select":
-            return data[..., self.padding_y:-self.padding_y, self.padding_x:-self.padding_x]
-        elif mode == "zeros":
+        if mode == "zeros":
             # For information:
-            # M_padded = self.M + max(0, self.M - 3*self.padding_y)
-            # N_padded = self.N + max(0, self.N - 3*self.padding_x)
-            pad_data = torch.nn.functional.pad(data[..., self.padding_y:self.M - self.padding_y,self.padding_x:self.N - self.padding_x], (self.padding_x, self.N - 2*self.padding_x, self.padding_y, self.M - 2*self.padding_y))
-            return data # (..., M_padded, N_padded)
+            # M_padded = self.M - 2*cut_y + self.max_ty
+            # N_padded = self.N - 2*cut_x + self.max_tx
+            pad_data = torch.nn.functional.pad(data, (0, self.max_tx, 0, self.max_ty))
+            return pad_data # (..., M_padded, N_padded)
         elif mode is None:
             return data
         else:
             raise Exception(f"Invalid padding mode: {mode}!")
     
-    def _apply_chunk(self, data, chunk_id, norm, padding):
+    def _apply_chunk(self, data, chunk_id, norm, pbc):
         """
         Internal function. Use apply instead.
         """
@@ -937,6 +955,7 @@ class WPHOp(torch.nn.Module):
                             data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
                             data_wt_f = data_f * self.psi_f[psi_indices]
                             xpsi = ifft(data_wt_f)
+                            if not pbc: xpsi = self._cutting(xpsi) # Cutting if no periodic bounday conditions
                             del data_f, data_wt_f
                     return torch.abs(xpsi)
                 elif p == 1: # We just need the wavelet transform
@@ -947,6 +966,7 @@ class WPHOp(torch.nn.Module):
                         data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
                         data_wt_f = data_f * self.psi_f[psi_indices]
                         xpsi = ifft(data_wt_f)
+                        if not pbc: xpsi = self._cutting(xpsi) # Cutting if no periodic bounday conditions
                         del data_f, data_wt_f
                     return xpsi
                 else:
@@ -978,10 +998,10 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
             
             # Normalization
-            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk, "select" if padding else None)
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
 
             # Potential padding
-            if padding:
+            if not pbc:
                 xpsi1_k1 = self._padding(xpsi1_k1, "zeros")
                 xpsi2_k2 = self._padding(xpsi2_k2, "zeros")
 
@@ -990,10 +1010,10 @@ class WPHOp(torch.nn.Module):
             del xpsi1_k1, xpsi2_k2
 
             # Select the different translations
-            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 0], curr_translation_pos[:, 1]] # (..., nb_wph_chunk)
+            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 1], curr_translation_pos[:, 0]] # (..., nb_wph_chunk)
             
             # Normalisation if padding
-            if padding:
+            if not pbc:
                 cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
             return cov, wph_chunk
@@ -1023,15 +1043,12 @@ class WPHOp(torch.nn.Module):
             data_st_f = data_f * self.phi_f[curr_phi_indices]  # (..., ?, P, M, N)
             del data_new, data_f
             data_st = ifft(data_st_f)
+            if not pbc: data_st = self._cutting(data_st) # Cutting if no periodic bounday conditions
             del data_st_f
             
             # Compute moments
             data_st_p = power_harmonics(data_st, cov_indices[:, 1])
             del data_st
-            
-            # Potential padding
-            if padding:
-                data_st_p = self._padding(data_st_p, "select")
             
             # Normalization
             data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
@@ -1051,7 +1068,7 @@ class WPHOp(torch.nn.Module):
         else: # Invalid
             raise Exception("Invalid chunk_id!")
             
-    def _apply_cross_chunk(self, data1, data2, chunk_id, norm, padding):
+    def _apply_cross_chunk(self, data1, data2, chunk_id, norm, pbc):
         """
         Internal function. Use apply instead.
         """
@@ -1085,6 +1102,7 @@ class WPHOp(torch.nn.Module):
                             data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
                             data_wt_f = data_f * self.psi_f[psi_indices]
                             xpsi = ifft(data_wt_f)
+                            if not pbc: xpsi = self._cutting(xpsi) # Cutting if no periodic bounday conditions
                             del data_f, data_wt_f
                     return torch.abs(xpsi)
                 elif p == 1: # We just need the wavelet transform
@@ -1095,6 +1113,7 @@ class WPHOp(torch.nn.Module):
                         data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
                         data_wt_f = data_f * self.psi_f[psi_indices]
                         xpsi = ifft(data_wt_f)
+                        if not pbc: xpsi = self._cutting(xpsi) # Cutting if no periodic bounday conditions
                         del data_f, data_wt_f
                     return xpsi
                 else:
@@ -1126,10 +1145,10 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xpsi2_k2, -3, indices_pseudo))
 
             # Normalization
-            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk, "select" if padding else None)
+            xpsi1_k1, xpsi2_k2 = self._wph_normalization(xpsi1_k1, xpsi2_k2, norm, cov_chunk)
 
             # Potential padding
-            if padding:
+            if not pbc:
                 xpsi1_k1 = self._padding(xpsi1_k1, "zeros")
                 xpsi2_k2 = self._padding(xpsi2_k2, "zeros")
             
@@ -1138,10 +1157,10 @@ class WPHOp(torch.nn.Module):
             del xpsi1_k1, xpsi2_k2
 
             # Select the different translations
-            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 0], curr_translation_pos[:, 1]] # (..., nb_wph_chunk)
+            cov = cov[...,  curr_id_cov_indices - curr_id_cov_indices[0], curr_translation_pos[:, 1], curr_translation_pos[:, 0]] # (..., nb_wph_chunk)
             
             # Normalisation if padding
-            if padding:
+            if not pbc:
                 cov = cov * self._translation_weight[wph_chunk]  # (..., nb_wph_chunk)
             
             return cov, wph_chunk
@@ -1174,15 +1193,12 @@ class WPHOp(torch.nn.Module):
             data_st_f = data_f * self.phi_f[curr_phi_indices]  # (..., ?, P, M, N)
             del data_new, data_f
             data_st = ifft(data_st_f)
+            if not pbc: data_st = self._cutting(data_st) # Cutting if no periodic bounday conditions
             del data_st_f
             
             # Compute moments
             data_st_p = power_harmonics(data_st, cov_indices[:, 1])
             del data_st
-            
-            # Potential padding
-            if padding:
-                data_st_p = self._padding(data_st_p, "select")
             
             # Normalization
             data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
@@ -1202,7 +1218,7 @@ class WPHOp(torch.nn.Module):
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False, cross=False):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -1222,10 +1238,9 @@ class WPHOp(torch.nn.Module):
         ret_indices : bool, optional
             When computing a specific chunk of coefficients, return the corresponding array
             of indices of the coefficients. The default is False.
-        padding : bool, optional
-            Crop border of transformed input data before any pixel average.
-            For data with non-periodic boundary conditions, set it to True.
-            The default is False.
+        pbc : bool, optional
+            Can we assume periodic bounday conditions for the input data?
+            If not, we cut out the relevant pixels of the wavelet transform of the input data that might be corrupted by the circular convolutions. The default is True.
         ret_wph_obj : bool, optional
             Return a WPH object if needed. The default is False.
         cross : bool, optional
@@ -1244,13 +1259,13 @@ class WPHOp(torch.nn.Module):
                 raise Exception("Please provide in data a list of two maps to estimate cross moments!")
         
         if chunk_id is None: # Compute all chunks at once
-            data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad, cross=cross)
+            data, nb_chunks = self.preconfigure(data, requires_grad=requires_grad, cross=cross, pbc=pbc)
             coeffs = []
             for i in range(self.nb_chunks):
                 if cross:
-                    cov, _ = self._apply_cross_chunk(data[0], data[1], i, norm, padding)
+                    cov, _ = self._apply_cross_chunk(data[0], data[1], i, norm, pbc)
                 else:
-                    cov, _ = self._apply_chunk(data, i, norm, padding)
+                    cov, _ = self._apply_chunk(data, i, norm, pbc)
                 coeffs.append(cov)
             coeffs = torch.cat(coeffs, -1)
             indices = torch.arange(coeffs.shape[-1])
@@ -1258,9 +1273,9 @@ class WPHOp(torch.nn.Module):
             if not self.preconfigured:
                 raise Exception("First preconfigure data!")
             if cross:
-                coeffs, indices = self._apply_cross_chunk(data[0], data[1], chunk_id, norm, padding)
+                coeffs, indices = self._apply_cross_chunk(data[0], data[1], chunk_id, norm, pbc)
             else:
-                coeffs, indices = self._apply_chunk(data, chunk_id, norm, padding)
+                coeffs, indices = self._apply_chunk(data, chunk_id, norm, pbc)
         
         # We free memory when needed
         if chunk_id is None or chunk_id == self.nb_chunks - 1:
@@ -1282,8 +1297,8 @@ class WPHOp(torch.nn.Module):
         else:
             return coeffs
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, padding=False, ret_wph_obj=False, cross=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False):
         """
         Alias of apply.
         """
-        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, padding=padding, ret_wph_obj=ret_wph_obj, cross=cross)
+        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, pbc=pbc, ret_wph_obj=ret_wph_obj, cross=cross)
