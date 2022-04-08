@@ -347,9 +347,9 @@ class TopHatWavelet (Filter):
         k2d_angle = np.angle(k2d)
         
         # Top-Hat wavelet
-        car_argk = np.logical_or((k2d_angle - self.theta) % (2*np.pi) <= np.pi/self.L,
-                                       (k2d_angle - self.theta) % (2*np.pi) >= 2*np.pi - np.pi/self.L).astype(float)
-        car_kmod = np.logical_and(k2d_mod > xi - xi/3, k2d_mod < xi + xi/3).astype(float) # To avoid error and/or warning
+        car_argk = np.logical_or((k2d_angle - self.theta) % (2*np.pi) < np.pi/(2*self.L),
+                                       (k2d_angle - self.theta) % (2*np.pi) >= 2*np.pi - np.pi/(2*self.L)).astype(float)
+        car_kmod = np.logical_and(k2d_mod >= xi - xi/3, k2d_mod < xi + xi/3).astype(float) # To avoid error and/or warning
         psi_f = c * car_argk * car_kmod
         psi_f = psi_f * np.exp(-1j * self.sigma * (k2d_x*self.nx + k2d_y*self.ny)) # Translation of the filter
         psi_f = self._periodization(psi_f)
