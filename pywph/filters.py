@@ -264,3 +264,96 @@ class BumpIsotropicWavelet (Filter):
             self.data = psi_f.real if self.nx == 0 and self.ny == 0 else psi_f
         else:
             self.data = np.fft.ifft2(psi_f).real
+
+
+class TopHatWavelet (Filter):
+    """
+    Top-Hat wavelet.
+    """
+    
+    def __init__(self, M, N, j, theta=0.0, k0=2*np.pi, L=8, n=0, alpha=0., fourier=False):
+        """
+        Constructor.
+
+        Parameters
+        ----------
+        M : int
+            Height.
+        N : int
+            Width.
+        j : int
+            Dyadic scale index.
+        theta : float, optional
+            Rotation angle. The default is 0.0.
+        k0 : float, optional
+            Central wavenumber before the dilation. The default is 2 * np.pi.
+        L : int, optional
+            Number of angles between 0 and pi. The default is 8.
+        n : int, optional
+            Radial coordinate for the translation of the filter. The default is 0.
+        alpha : float, optional
+            Direction for the translation of the filter (relative to theta direction). The default is 0.
+        fourier : bool, optional
+            Do we want to store the filter in Fourier space or not? The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.fourier = fourier
+        self.real = fourier and (n == 0) # Real filter in Fourier space when no translation
+        super().__init__(M, N, dtype=np.float if self.real else np.complex)
+        self.theta = theta
+        self.sigma = 2 ** j
+        self.k0 = k0
+        self.L = L
+        self.nx = n * np.cos(self.theta - alpha)
+        self.ny = n * np.sin(self.theta - alpha)
+        self.build()
+    
+    def _periodization(self, filter_f):
+        filter_f_shifted = np.fft.fftshift(filter_f)
+        
+        M = self.M
+        N = self.N
+        
+        filter_f_shifted[M - M//2:M, N - N//2:N + (N+1)//2] += filter_f_shifted[M + (M+1)//2:, N - N//2:N + (N+1)//2]
+        filter_f_shifted[M:M + (M+1)//2, N - N//2:N + (N+1)//2] += filter_f_shifted[:M - M//2, N - N//2:N + (N+1)//2]
+    
+        filter_f_shifted[M - M//2:M + (M+1)//2, N - N//2:N] += filter_f_shifted[M - M//2:M + (M+1)//2, N + (N+1)//2:]
+        filter_f_shifted[M - M//2:M + (M+1)//2, N:N + (N+1)//2] += filter_f_shifted[M - M//2:M + (M+1)//2, :N - N//2]
+    
+        filter_f_shifted[M:M + (M+1)//2, N:N + (N+1)//2] += filter_f_shifted[:M - M//2, :N - N//2]
+        filter_f_shifted[M - M//2:M, N - N//2:N] += filter_f_shifted[M + (M+1)//2:, N + (N+1)//2:]
+    
+        filter_f_shifted[M:M + (M+1)//2, N - N//2:N] += filter_f_shifted[:M - M//2, N + (N+1)//2:]
+        filter_f_shifted[M - M//2:M, N:N + (N+1)//2] += filter_f_shifted[M + (M+1)//2:, :N - N//2]
+        
+        return np.fft.ifftshift(filter_f_shifted[M - M//2:M + (M+1)//2, N - N//2:N + (N+1)//2])
+    
+    def build(self):
+        # Normalization
+        c = 1.0
+        # Modulus of the central wavenumber
+        xi = self.k0 / self.sigma
+        
+        # Frequencies (two times larger frequency domain for the periodization)
+        kx = 2 * 2 * np.pi * np.fft.fftfreq(2 * self.N)
+        ky = 2 * 2 * np.pi * np.fft.fftfreq(2 * self.M)
+        k2d_x, k2d_y = np.meshgrid(kx, ky)
+        k2d = k2d_x + 1j*k2d_y
+        k2d_mod = np.absolute(k2d)
+        k2d_angle = np.angle(k2d)
+        
+        # Top-Hat wavelet
+        car_argk = np.logical_or((k2d_angle - self.theta) % (2*np.pi) <= np.pi/self.L,
+                                       (k2d_angle - self.theta) % (2*np.pi) >= 2*np.pi - np.pi/self.L).astype(float)
+        car_kmod = np.logical_and(k2d_mod > xi - xi/3, k2d_mod < xi + xi/3).astype(float) # To avoid error and/or warning
+        psi_f = c * car_argk * car_kmod
+        psi_f = psi_f * np.exp(-1j * self.sigma * (k2d_x*self.nx + k2d_y*self.ny)) # Translation of the filter
+        psi_f = self._periodization(psi_f)
+        if self.fourier:
+            self.data = psi_f.real if self.nx == 0 and self.ny == 0 else psi_f
+        else:
+            self.data = np.fft.ifft2(psi_f)
