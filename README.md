@@ -20,7 +20,9 @@ Related references:
 
 ### Standard installation (from the Python Package Index)
 
-Coming soon...
+```
+pip install pywph
+```
 
 ### Install from source
 
