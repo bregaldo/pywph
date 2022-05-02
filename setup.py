@@ -7,7 +7,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="pywph",
-    version="1.0",
+    version="1.0.1",
     author="Bruno Régaldo-Saint Blancard",
     author_email="bruno.regaldo@phys.ens.fr",
     description="Wavelet Phase Harmonics in Python with GPU acceleration.",
