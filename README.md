@@ -1,7 +1,7 @@
 # PyWPH : Wavelet Phase Harmonics in Python
 
 PyWPH is a Python package designed for the computation and handling of the Wavelet Phase Harmonics (WPH) statistics.
-These statistics can be computed from real or complex images (2D data). Calculations are GPU accelerated using PyTorch 1.8/CUDA.
+These statistics can be computed from real or complex images (2D data). Calculations are GPU accelerated using PyTorch/CUDA (torch>=1.9.0).
 
 Install PyWPH and check out the examples/ folder. You will find elementary examples to compute WPH coefficients from an image,
 as well as more convoluted synthesis or denoising scripts.
