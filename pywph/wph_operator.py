@@ -557,7 +557,7 @@ class WPHOp(torch.nn.Module):
                 if i >= self.wph_moments_indices.shape[0] - len(extra_wph_moments): # _moments_indices for extra_wph_moments is incremented for each new value of (j1, t1, p1, j2, t2, p2)
                     self._moments_indices[4:] += 1
             self._id_cov_indices.append(id_cov)
-            trans_pos, trans_weight = self._get_translations_params(elt[3], elt[4], elt[6], elt[7])
+            trans_pos, trans_weight = self._get_translations_params(elt[3], elt[4], elt[6], elt[7], tau_grid)
             self.max_tx = max(abs(trans_pos[0]), self.max_tx)
             self.max_ty = max(abs(trans_pos[1]), self.max_ty)
             self._translation_pos.append(trans_pos)
