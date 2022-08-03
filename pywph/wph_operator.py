@@ -215,7 +215,7 @@ class WPHOp(torch.nn.Module):
         self.psi_f = to_torch(self.psi_f, device=self.device, precision=self.precision)
         self.phi_f = to_torch(self.phi_f, device=self.device, precision=self.precision)
 
-    def _get_translations_params(self, j, t, n, a):
+    def _get_translations_params(self, j, t, n, a, tau_grid):
         """
         Internal function used for the discretization of the tau variable in the definition of the WPH moments.
 
@@ -233,6 +233,8 @@ class WPHOp(torch.nn.Module):
             n index.
         a : int
             a index.
+        tau_grid : str
+            Grid used for the discretization of the tau variable. Two possible choices: "legacy" (used in past works) or "exp" (now, default one).
 
         Returns
         -------
@@ -241,16 +243,28 @@ class WPHOp(torch.nn.Module):
         float
             Weighting factor used when pbc=False for the correct normalization of the WPH coefficients.
         """
-        r_factor = 3 # Radial step size factor for translations
-        theta = t * np.pi/self.L
-        alpha = a * np.pi/self.A
-        tx = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
-        ty = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
+        if tau_grid == "legacy":
+            r_factor = 3 # Radial step size factor for translations
+            theta = t * np.pi/self.L
+            alpha = a * np.pi/self.A
+            tx = np.rint(r_factor * n * 2**j * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
+            ty = np.rint(r_factor * n * 2**j * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
+        elif tau_grid == "exp":
+            theta = t * np.pi/self.L
+            alpha = a * np.pi/self.A
+            tx = np.rint((n != 0)*(2.0**(n)) * np.cos(theta - alpha)).astype(int) # Round to the nearest integer
+            ty = np.rint((n != 0)*(2.0**(n)) * np.sin(theta - alpha)).astype(int) # Round to the nearest integer
+        else:
+            raise Exception(f"Invalid value of tau_grid: {tau_grid}!")
+        #if tx > self.N or ty > self.M:
+        #    print(tx, ty, n, j)
+        tx = tx % self.N
+        ty = ty % self.M
         return [tx, ty], 1 / self._translation_weight_map[ty, tx]
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
-                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, A=None):
+                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, A=None, tau_grid="exp"):
         """
         Load the specified WPH model. A model is made of WPH moments, and scaling moments.
         The default model includes the following class of moments:
@@ -283,6 +297,8 @@ class WPHOp(torch.nn.Module):
             \Delta_n parameter. Number of radial steps for the discretization of the \tau variable. The default is None, leaving previous dn parameter unchanged.
         A : int, optional
             Number of azimuthal steps on [0, \pi[ for the discretization of the \alpha variable. The default is None, leaving previous A parameter unchanged.
+        tau_grid : str, optional
+            Grid used for the discretization of the tau variable. Two possible choices: "legacy" (used in past works) or "exp" (default one now). See _get_translations_params for definitions. The default is "exp".
             
         Raises
         ------
@@ -349,13 +365,17 @@ class WPHOp(torch.nn.Module):
         
         # Moments and indices
         self._moments_indices = np.array([0, 0, 0, 0, 0, 0]) # End indices delimiting the classes of covariances: S11, S00/C00, S01/C01, S10/C10, Cphase/extra, L
+
+        # For legacy version of tau grid
+        get_dn_eff = lambda j: min(self.J - 1 - j, dn) if tau_grid == "legacy" else dn
+        n_inv_compensation = lambda j1, j2: 2 ** (j2 - j1) if tau_grid == "legacy" else 1
     
         for clas in classes:
             cnt = 0
             if clas == "S11":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range((1 + self.cplx) * self.L):
-                        dn_eff = min(self.J - 1 - j1, dn)
+                        dn_eff = get_dn_eff(j1)
                         for n in range(dn_eff + 1):
                             if n == 0:
                                 wph_indices.append([j1, t1, 1, j1, t1, 1, n, 0, 0])
@@ -373,7 +393,7 @@ class WPHOp(torch.nn.Module):
                         else:
                             t1_range = range(2 * self.L) # Factor 2 for cross-moments symmetry
                         for t1 in t1_range:
-                            dn_eff = min(self.J - 1 - j1, dn)
+                            dn_eff = get_dn_eff(j1)
                             for n in range(dn_eff + 1):
                                 if n == 0:
                                     wph_indices.append([j1, t1, 1, j1, (t1 + self.L)  % (2*self.L), 1, n, 0, 1])
@@ -385,7 +405,7 @@ class WPHOp(torch.nn.Module):
             elif clas == "S00":
                 for j1 in range(self.j_min, self.J):
                     for t1 in range((1 + self.cplx) * self.L):
-                        dn_eff = min(self.J - 1 - j1, dn)
+                        dn_eff = get_dn_eff(j1)
                         for n in range(dn_eff + 1):
                             if n == 0:
                                 wph_indices.append([j1, t1, 0, j1, t1, 0, n, 0, 0])
@@ -427,7 +447,7 @@ class WPHOp(torch.nn.Module):
                                 t2_range = range(t1 - dl, t1 + dl)
                             for t2 in t2_range:
                                 if t1 == t2:
-                                    dn_eff = min(self.J - 1 - j2, dn)
+                                    dn_eff = get_dn_eff(j2)
                                     for n in range(dn_eff + 1):
                                         if n == 0:
                                             wph_indices.append([j1, t1, 0, j2, t2, 1, n, 0, 0])
@@ -454,13 +474,13 @@ class WPHOp(torch.nn.Module):
                                 t2_range = range(t1 - dl, t1 + dl)
                             for t2 in t2_range:
                                 if t1 == t2:
-                                    dn_eff = min(self.J - 1 - j2, dn)
+                                    dn_eff = get_dn_eff(j2)
                                     for n in range(dn_eff + 1):
                                         if n == 0:
-                                            wph_indices.append([j2, t2, 1, j1, t1, 0, 2 ** (j2 - j1) * n, 0, 0])
+                                            wph_indices.append([j2, t2, 1, j1, t1, 0, n_inv_compensation(j1, j2) * n, 0, 0])
                                         else:
                                             for a in range(2 * self.A): # Factor 2 needed even for real data
-                                                wph_indices.append([j2, t2, 1, j1, t1, 0, 2 ** (j2 - j1) * n, a, 0])
+                                                wph_indices.append([j2, t2, 1, j1, t1, 0, n_inv_compensation(j1, j2) * n, a, 0])
                                 else:
                                     wph_indices.append([j2, t2 % ((1 + self.cplx) * self.L), 1, j1, t1, 0, 0, 0, 0])
                                 cnt += 1
@@ -482,14 +502,13 @@ class WPHOp(torch.nn.Module):
                 for j1 in range(self.j_min, self.J):
                     for j2 in range(j1 + 1, min(j1 + 1 + dj, self.J)):
                         for t1 in range((1 + self.cplx) * self.L):
-                            dn_eff = min(self.J - 1 - j2, dn)
+                            dn_eff = get_dn_eff(j2)
                             for n in range(dn_eff + 1):
                                 if n == 0:
-                                    # Should be 2**(j2 - j1)*n instead of n, but not possible yet..
-                                    wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, 2 ** (j2 - j1) * n, 0, 0])
+                                    wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n_inv_compensation(j1, j2) * n, 0, 0])
                                 else:
                                     for a in range(2 * self.A): # Factor 2 needed even for real data
-                                        wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, 2 ** (j2 - j1) * n, a, 0])
+                                        wph_indices.append([j2, t1, 2 ** (j2 - j1), j1, t1, 1, n_inv_compensation(j1, j2) * n, a, 0])
                             cnt += 1
                 self._moments_indices[4:] += cnt
             elif clas == "L":
