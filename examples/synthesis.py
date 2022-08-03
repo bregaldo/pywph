@@ -12,7 +12,7 @@ import pywph as pw
 
 M, N = 512, 512
 J = 8
-L = 8
+L = 4
 dn = 2
 
 norm = "auto"   # Normalization

@@ -6,7 +6,7 @@ import numpy as np
 
 M, N = 256, 256
 J = 7
-L = 8
+L = 4
 dn = 0
 
 device = 0

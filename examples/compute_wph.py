@@ -5,7 +5,7 @@ import numpy as np
 
 M, N = 256, 256
 J = 7
-L = 8
+L = 4
 dn = 0
 
 data = np.load('data/I_1.npy')[::2, ::2]

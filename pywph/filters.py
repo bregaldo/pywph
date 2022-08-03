@@ -84,7 +84,7 @@ class BumpSteerableWavelet (Filter):
     Bump-steerable wavelet.
     """
     
-    def __init__(self, M, N, j, theta=0.0, k0=2*np.pi, L=8, n=0, alpha=0., fourier=False):
+    def __init__(self, M, N, j, theta=0.0, k0=2*np.pi, L=4, n=0, alpha=0., fourier=False):
         """
         Constructor.
 
@@ -101,7 +101,7 @@ class BumpSteerableWavelet (Filter):
         k0 : float, optional
             Central wavenumber before the dilation. The default is 2 * np.pi.
         L : int, optional
-            Number of angles between 0 and pi. The default is 8.
+            Number of angles between 0 and pi. The default is 4.
         n : int, optional
             Radial coordinate for the translation of the filter. The default is 0.
         alpha : float, optional
@@ -271,7 +271,7 @@ class TopHatWavelet (Filter):
     Top-Hat wavelet.
     """
     
-    def __init__(self, M, N, j, theta=0.0, k0=2*np.pi, L=8, n=0, alpha=0., fourier=False):
+    def __init__(self, M, N, j, theta=0.0, k0=2*np.pi, L=4, n=0, alpha=0., fourier=False):
         """
         Constructor.
 
@@ -288,7 +288,7 @@ class TopHatWavelet (Filter):
         k0 : float, optional
             Central wavenumber before the dilation. The default is 2 * np.pi.
         L : int, optional
-            Number of angles between 0 and pi. The default is 8.
+            Number of angles between 0 and pi. The default is 4.
         n : int, optional
             Radial coordinate for the translation of the filter. The default is 0.
         alpha : float, optional

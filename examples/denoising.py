@@ -26,7 +26,7 @@ import pywph as pw
 
 M, N = 256, 256
 J = 7
-L = 8
+L = 4
 dn = 2
 
 norm = "auto"   # Normalization

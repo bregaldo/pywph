@@ -29,7 +29,7 @@ class WPHOp(torch.nn.Module):
     Wavelet Phase Harmonic (WPH) operator.
     """
     
-    def __init__(self, M, N, J, L=8, cplx=False,
+    def __init__(self, M, N, J, L=4, cplx=False,
                  lp_filter_cls=GaussianFilter, bp_filter_cls=BumpSteerableWavelet,
                  j_min=0, dn=0, A=4,
                  cut_x_param=1/2, cut_y_param=1/2,
@@ -46,7 +46,7 @@ class WPHOp(torch.nn.Module):
         J : int
             Number of dyadic scales.
         L : int, optional
-            Number of angles between 0 and pi. The default is 8.
+            Number of angles between 0 and pi. The default is 4.
         cplx : bool, optional
             Set it to true if the WPHOp instance will ever apply to complex data.
             This would load in memory the whole set of bandpass filters.
