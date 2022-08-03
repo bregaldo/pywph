@@ -27,7 +27,7 @@ class WPH:
         wph_coeffs_indices : list or np.ndarray or torch.tensor
             Indices for the WPH moments. Order: [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo].
         sm_coeffs_indices : list or np.ndarray or torch.tensor
-            Indices for the scaling moments. Order: [j, p]. The default is np.array([]).
+            Indices for the scaling moments. Order: [j, p1, p2]. The default is np.array([]).
 
         Returns
         -------
@@ -39,18 +39,10 @@ class WPH:
             and coeffs.shape[-1] != wph_coeffs_indices.shape[0] + 2 * sm_coeffs_indices.shape[0]:
             raise Exception("Shape inconsistency between coeffs and corresponding indices (wph_coeffs_indices, sm_coeffs_indices).")
         
-        # Detect if scaling moments were computed on complex maps or not
-        if coeffs.shape[-1] != wph_coeffs_indices.shape[0] + sm_coeffs_indices.shape[0]:
-            self.cplx = True
-        else:
-            self.cplx = False
-        
         # Convert and store coefficients
         coeffs = to_numpy(coeffs).copy()
         self.wph_coeffs = coeffs[..., :wph_coeffs_indices.shape[0]] # WPH moments estimates
         self.sm_coeffs = coeffs[..., wph_coeffs_indices.shape[0]:] # Scaling moments estimates
-        if self.cplx:
-            self.sm_coeffs = self.sm_coeffs.reshape(self.sm_coeffs.shape[:-1] + (2, -1))
         
         # Store indices
         self.wph_coeffs_indices = to_numpy(wph_coeffs_indices).copy()
@@ -65,8 +57,8 @@ class WPH:
             self.J = max(self.wph_coeffs_indices[:, 0].max(), self.wph_coeffs_indices[:, 3].max()) + 1
         if L is not None:
             self.L = L
-        else: # Auto-detection of L
-            self.L = (max(self.wph_coeffs_indices[:, 1].max(), self.wph_coeffs_indices[:, 4].max()) + 1) // (1 + self.cplx)
+        else: # Auto-detection of L (wrong by a factor 2 for complex data)
+            self.L = (max(self.wph_coeffs_indices[:, 1].max(), self.wph_coeffs_indices[:, 4].max()) + 1)
             
         if A is not None:
             self.A = A
@@ -77,7 +69,7 @@ class WPH:
         """
         Lexicographical reordering of the coefficients:
         - for WPH moments on [j1, t1, p1, j2, t2, p2, n, a, pseudo]
-        - for scaling moments on [j, p]
+        - for scaling moments on [j, p1, p2]
         Returns
         -------
         None.
@@ -115,6 +107,8 @@ class WPH:
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 1] == p)
             if p1 is not None: # p and p1 are aliases in this case
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 1] == p1)
+            if p2 is not None:
+                filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 2] == p2)
         else:
             filtering = np.ones(self.wph_coeffs_indices.shape[0], np.bool)
             if j1 is not None:
@@ -284,7 +278,7 @@ class WPH:
         """
         ret = np.array_equal(self.wph_coeffs_indices, other.wph_coeffs_indices)
         ret &= np.array_equal(self.sm_coeffs_indices, other.sm_coeffs_indices)
-        ret &= self.cplx == other.cplx
+        ret &= self.sm_coeffs.shape[-1] == other.sm_coeffs.shape[-1]
         assert ret, "Inconsistency between self and other!"
     
     def __add__(self, other):

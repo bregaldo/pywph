@@ -274,7 +274,7 @@ class WPHOp(torch.nn.Module):
         One can add custom WPH and scaling moments using extra_wph_moments and extra_scaling_moments parameters.
         The expected formats are:
             - for extra_wph_moments: list of lists of 9 elements corresponding to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
-            - for extra_scaling_moments: list of lists of 2 elements correponding to [j, p]
+            - for extra_scaling_moments: list of lists of 2 elements correponding to [j, p1, p2]
 
         Parameters
         ----------
@@ -284,11 +284,11 @@ class WPHOp(torch.nn.Module):
         extra_wph_moments : list of lists of length 9, optional
             Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
-            Format corresponds to [j, p]. The default is [].
+            Format corresponds to [j, p1, p2]. The default is [].
         cross_moments : bool, optional
             Adapt the model for the computation of cross statistics. This ensures that cross statistics of (x, y) remain the same as those of (y, x), as well as preventing redundancy in the coefficients. The default is False.
         p_list : list of int, optional
-            For scaling moments ("L"), list of moments to compute for each low-pass filter.
+            For scaling moments ("L"), list of p values to use for each low-pass filter.
         dj : int, optional
             Maximum delta j for coefficients quantifying interactions between scales. The default is None, corresponding to J - j_min - 1.
         dl : int, optional
@@ -347,7 +347,7 @@ class WPHOp(torch.nn.Module):
                 return
         
         wph_indices = [] # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
-        sm_indices = [] # [j, p]
+        sm_indices = [] # [j, p1, p2]
         
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
@@ -515,7 +515,7 @@ class WPHOp(torch.nn.Module):
                 # Scaling moments
                 for j in range(max(self.j_min, 2), self.J - 1):
                     for p in p_list:
-                        sm_indices.append([j, p])
+                        sm_indices.append([j, p, p])
                         cnt += 1
                 self._moments_indices[5:] += cnt
             else:
@@ -575,7 +575,7 @@ class WPHOp(torch.nn.Module):
         # Scaling moments preparation
         self._phi_indices = []
         for i in range(self.scaling_moments_indices.shape[0]):
-            elt = self.scaling_moments_indices[i] # [j, p]
+            elt = self.scaling_moments_indices[i] # [j, p1, p2]
             self._phi_indices.append(elt[0] - max(self.j_min, 2))
         self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
         self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device, torch.long)
@@ -1296,25 +1296,28 @@ class WPHOp(torch.nn.Module):
             else:
                 coeffs, indices = self._apply_chunk(data, chunk_id, norm, pbc)
         
-        # We free memory when needed
-        if chunk_id is None or chunk_id == self.nb_chunks - 1:
-            self._free()
-            
+        ret = None
         if ret_wph_obj:
             if chunk_id is None:
-                return WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L, A=self.A)
+                ret = WPH(coeffs, self.wph_moments_indices, self.scaling_moments_indices, J=self.J, L=self.L, A=self.A)
             else:
                 if chunk_id < self.nb_chunks_wph:
                     cov_chunk = self.wph_moments_chunk_list[chunk_id]
                     wph_chunk_indices = torch.nonzero(torch.logical_and(self._id_cov_indices >= cov_chunk[0], self._id_cov_indices <= cov_chunk[-1]))[:, 0] # (nb_wph_chunk)
-                    return WPH(coeffs, wph_chunk_indices, J=self.J, L=self.L, A=self.A)
+                    ret = WPH(coeffs, wph_chunk_indices, J=self.J, L=self.L, A=self.A)
                 else:
-                    cov_indices = self.scaling_moments_indices[self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[3]]]
-                return WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L, A=self.A)
+                    cov_indices = self.scaling_moments_indices[self.scaling_moments_chunk_list[chunk_id - self.final_chunk_id_per_class[-2]]]
+                ret = WPH(coeffs, np.array([]), sm_coeffs_indices=cov_indices, J=self.J, L=self.L, A=self.A)
         elif ret_indices:
-            return coeffs, indices
+            ret = coeffs, indices
         else:
-            return coeffs
+            ret = coeffs
+
+        # We free memory when needed
+        if chunk_id is None or chunk_id == self.nb_chunks - 1:
+            self._free()
+
+        return ret
     
     def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False):
         """
