@@ -55,7 +55,7 @@ class GaussianFilter (Filter):
         self.theta = theta
         self.gamma = gamma
         self.sigma0 = sigma0
-        self.sigma = self.sigma0 * 2 ** j
+        self.sigma = self.sigma0 * 2.0 ** j
         self.build()
         
     def build(self):
@@ -118,7 +118,7 @@ class BumpSteerableWavelet (Filter):
         self.real = fourier and (n == 0) # Real filter in Fourier space when no translation
         super().__init__(M, N, dtype=np.float if self.real else np.complex)
         self.theta = theta
-        self.sigma = 2 ** j
+        self.sigma = 2.0 ** j
         self.k0 = k0
         self.L = L
         self.nx = n * np.cos(self.theta - alpha)
@@ -214,7 +214,7 @@ class BumpIsotropicWavelet (Filter):
         self.real = True if not self.fourier else n == 0  # Filter is always real in physical space, and this is the case in Fourier space when no translation
         super().__init__(M, N, dtype=np.float) # No need for a complex data type
         self.theta = theta
-        self.sigma = 2 ** j
+        self.sigma = 2.0 ** j
         self.k0 = k0
         self.nx = n * np.cos(self.theta - alpha)
         self.ny = n * np.sin(self.theta - alpha)
@@ -305,7 +305,7 @@ class TopHatWavelet (Filter):
         self.real = fourier and (n == 0) # Real filter in Fourier space when no translation
         super().__init__(M, N, dtype=np.float if self.real else np.complex)
         self.theta = theta
-        self.sigma = 2 ** j
+        self.sigma = 2.0 ** j
         self.k0 = k0
         self.L = L
         self.nx = n * np.cos(self.theta - alpha)

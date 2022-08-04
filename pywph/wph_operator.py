@@ -105,8 +105,7 @@ class WPHOp(torch.nn.Module):
         # Normalization variables
         self.norm_wph_means = None
         self.norm_wph_stds = None
-        self.norm_sm_means_1 = None
-        self.norm_sm_means_2 = None
+        self.norm_sm_means = None
         self.norm_sm_stds = None
         
     def to(self, device):
@@ -145,10 +144,8 @@ class WPHOp(torch.nn.Module):
                 self.norm_wph_means = self.norm_wph_means.to(device)
             if self.norm_wph_stds is not None:
                 self.norm_wph_stds = self.norm_wph_stds.to(device)
-            if self.norm_sm_means_1 is not None:
-                self.norm_sm_means_1 = self.norm_sm_means_1.to(device)
-            if self.norm_sm_means_2 is not None:
-                self.norm_sm_means_2 = self.norm_sm_means_2.to(device)
+            if self.norm_sm_means is not None:
+                self.norm_sm_means = self.norm_sm_means.to(device)
             if self.norm_sm_stds is not None:
                 self.norm_sm_stds = self.norm_sm_stds.to(device)
             
@@ -194,9 +191,8 @@ class WPHOp(torch.nn.Module):
         ### BUILD PHI FILTERS
 
         if len(self.scaling_moments_indices) != 0:
-            j_min = min(self.scaling_moments_indices[:, 0])
-            j_max = max(self.scaling_moments_indices[:, 0])
-            nb_phi = j_max - j_min + 1
+            jvals = torch.unique(self.scaling_moments_indices[:, 0]).cpu().numpy()
+            nb_phi = len(jvals)
         else:
             nb_phi = 0 # No phi filter needed
 
@@ -205,7 +201,7 @@ class WPHOp(torch.nn.Module):
 
         # Build phi filters if needed (automatic check of the model)
         if len(self.scaling_moments_indices) != 0:
-            for ind, j in enumerate(range(j_min, j_max + 1)):
+            for ind, j in enumerate(jvals):
                 g = self.lp_filter_cls(self.M, self.N, j, sigma0=sigma0, fourier=True).data
                 self.phi_f[ind] = g
                 self.phi_indices[ind] = j
@@ -264,7 +260,7 @@ class WPHOp(torch.nn.Module):
         
     def load_model(self, classes=["S11", "S00", "S01", "C01", "Cphase", "L"],
                    extra_wph_moments=[], extra_scaling_moments=[], cross_moments=False,
-                   p_list=[0, 1, 2, 3], dj=None, dl=None, dn=None, A=None, tau_grid="exp"):
+                   sm_j_list=[], sm_p_list=[(0, 0), (0, 1), (1, 1)], dj=None, dl=None, dn=None, A=None, tau_grid="exp"):
         """
         Load the specified WPH model. A model is made of WPH moments, and scaling moments.
         The default model includes the following class of moments:
@@ -284,11 +280,13 @@ class WPHOp(torch.nn.Module):
         extra_wph_moments : list of lists of length 9, optional
             Format corresponds to [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]. The default is [].
         extra_scaling_moments : list of lists of length 2, optional
-            Format corresponds to [j, p1, p2]. The default is [].
+            Format corresponds to [j, p1, p2, pseudo]. The default is [].
         cross_moments : bool, optional
             Adapt the model for the computation of cross statistics. This ensures that cross statistics of (x, y) remain the same as those of (y, x), as well as preventing redundancy in the coefficients. The default is False.
-        p_list : list of int, optional
-            For scaling moments ("L"), list of p values to use for each low-pass filter.
+        sm_j_list : list of int, optional
+            For scaling moments ("L"), list of j values for the low-pass filters.
+        sm_p_list : list of int, optional
+            For scaling moments ("L"), list of (p1, p2) values to use for each low-pass filter.
         dj : int, optional
             Maximum delta j for coefficients quantifying interactions between scales. The default is None, corresponding to J - j_min - 1.
         dl : int, optional
@@ -321,6 +319,7 @@ class WPHOp(torch.nn.Module):
         
         # Symmetrize if cross_moments is True
         if cross_moments:
+            sm_p_list_sym = sm_p_list.copy()
             cont = True
             if "S01" in classes and "S10" not in classes:
                 classes += ["S10"]
@@ -340,14 +339,18 @@ class WPHOp(torch.nn.Module):
             if "Cphase_inv" in classes and "Cphase" not in classes:
                 classes += ["Cphase"]
                 cont = False
+            for elt in sm_p_list:
+                if (elt[1], elt[0]) not in sm_p_list:
+                    sm_p_list_sym += [(elt[1], elt[0])]
+                    cont = False
             if not cont: # Reload symmetrized model
                 self.load_model(classes, extra_wph_moments=extra_wph_moments,
                                 extra_scaling_moments=extra_scaling_moments, cross_moments=cross_moments,
-                                p_list=p_list, dj=dj, dl=dl, dn=dn, A=A)
+                                sm_p_list=sm_p_list_sym, dj=dj, dl=dl, dn=dn, A=A)
                 return
         
         wph_indices = [] # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
-        sm_indices = [] # [j, p1, p2]
+        sm_indices = [] # [j, p1, p2, pseudo]
         
         # Default values for dj, dl, dn, alpha_list
         if dj is None:
@@ -362,6 +365,9 @@ class WPHOp(torch.nn.Module):
             A = self.A
         else:
             self.A = A
+        # Default value for sm_j_list
+        if sm_j_list == []:
+            sm_j_list = range(-1, self.J // 4 + 1) # Just made to be [-1, 0, 1, 2] when J = 8 (in practice should be adapted to your case)
         
         # Moments and indices
         self._moments_indices = np.array([0, 0, 0, 0, 0, 0]) # End indices delimiting the classes of covariances: S11, S00/C00, S01/C01, S10/C10, Cphase/extra, L
@@ -513,10 +519,13 @@ class WPHOp(torch.nn.Module):
                 self._moments_indices[4:] += cnt
             elif clas == "L":
                 # Scaling moments
-                for j in range(max(self.j_min, 2), self.J - 1):
-                    for p in p_list:
-                        sm_indices.append([j, p, p])
+                for j in sm_j_list:
+                    for p1, p2 in sm_p_list:
+                        sm_indices.append([j, p1, p2, 0])
                         cnt += 1
+                        if self.cplx and p1 == 1 and p2 == 1: # Pseudo moment
+                            sm_indices.append([j, p1, p2, 1])
+                            cnt += 1
                 self._moments_indices[5:] += cnt
             else:
                 raise Exception(f"Unknown class of moments: {clas}")
@@ -574,9 +583,10 @@ class WPHOp(torch.nn.Module):
         
         # Scaling moments preparation
         self._phi_indices = []
+        sm_j_list_unique = list(np.unique(np.array(sm_j_list)))
         for i in range(self.scaling_moments_indices.shape[0]):
-            elt = self.scaling_moments_indices[i] # [j, p1, p2]
-            self._phi_indices.append(elt[0] - max(self.j_min, 2))
+            elt = self.scaling_moments_indices[i] # [j, p1, p2, pseudo]
+            self._phi_indices.append(sm_j_list_unique.index(elt[0]))
         self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
         self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device, torch.long)
         
@@ -773,7 +783,7 @@ class WPHOp(torch.nn.Module):
     
     def _wph_normalization(self, xpsi1_k1, xpsi2_k2, norm, cov_chunk):
         """
-        Internal function for the normalization of WPH moments.
+        Internal function for the normalization of the WPH moments.
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
@@ -818,62 +828,54 @@ class WPHOp(torch.nn.Module):
             xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
             xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
         return xpsi1_k1, xpsi2_k2
-    
-    def _sm_normalization_1(self, data_new, norm):
+
+    def _sm_normalization(self, xphi1_k1, xphi2_k2, norm, cov_chunk):
         """
         Internal function for the normalization of the scaling moments.
         """
         if norm == "auto": # Automatic normalization
             # Compute or retrieve means
-            if self.norm_sm_means_1 is None:
-                mean = torch.mean(data_new.detach(), (-1, -2), keepdim=True)
-                self.norm_sm_means_1 = mean
-            else:
-                mean = self.norm_sm_means_1
-            # Substract the mean
-            data_new -= mean
-        else: # No normalization
-            # Substract the mean
-            data_new -= torch.mean(data_new, (-1, -2), keepdim=True)
-            
-        return data_new
-    
-    def _sm_normalization_2(self, data_st_p, norm, cov_chunk):
-        """
-        Internal function for the normalization of the scaling moments.
-        """
-        if norm == "auto": # Automatic normalization
-            # Compute or retrieve means
-            if self.norm_sm_means_2 is None or self.norm_sm_means_2.shape[-3] != self.nb_scaling_moments: # If self.norm_sm_means_2 is not complete
-                mean = torch.mean(data_st_p.detach(), (-1, -2), keepdim=True)
-                if self.norm_sm_means_2 is None:
-                    self.norm_sm_means_2 = mean
+            if self.norm_sm_means is None or self.norm_sm_means.shape[-4] != self.nb_scaling_moments: # If self.norm_sm_means is not complete
+                mean1 = torch.mean(xphi1_k1.detach(), (-1, -2), keepdim=True)
+                mean2 = torch.mean(xphi2_k2.detach(), (-1, -2), keepdim=True)
+                means = torch.stack((mean1, mean2), dim=-1)
+                if self.norm_sm_means is None:
+                    self.norm_sm_means = means
                 else:
-                    self.norm_sm_means_2 = torch.cat((self.norm_sm_means_2, mean), dim=-3)
+                    self.norm_sm_means = torch.cat((self.norm_sm_means, means), dim=-4)
             else:
-                mean = self.norm_sm_means_2[..., cov_chunk, :, :]
-                
-            # Substract the mean
-            data_st_p -= mean
+                mean1 = self.norm_sm_means[..., cov_chunk, :, :, 0] # (..., P, 1, 1)
+                mean2 = self.norm_sm_means[..., cov_chunk, :, :, 1] # (..., P, 1, 1)
+            
+            # Substract the means
+            xphi1_k1 -= mean1.to(xphi1_k1.dtype) # Consistent dtype needed
+            xphi2_k2 -= mean2.to(xphi2_k2.dtype) # Consistent dtype needed
             
             # Compute or retrieve (approximate) stds
-            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-3] != self.nb_scaling_moments: # If self.norm_sm_stds is not complete
-                std = torch.sqrt(torch.mean(torch.abs(data_st_p.detach()) ** 2, (-1, -2), keepdim=True))
-                std[std == 0] = 1.0 # To avoid division by zero
+            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-4] != self.nb_scaling_moments:  # If self.norm_sm_stds is not complete
+                std1 = torch.sqrt(torch.mean(torch.abs(xphi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(xphi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                
+                std1[std1 == 0] = 1.0 # To avoid division by zero
+                std2[std2 == 0] = 1.0 # To avoid division by zero
+                
+                stds = torch.stack((std1, std2), dim=-1)
                 if self.norm_sm_stds is None:
-                    self.norm_sm_stds = std
+                    self.norm_sm_stds = stds
                 else:
-                    self.norm_sm_stds = torch.cat((self.norm_sm_stds, std), dim=-3)
+                    self.norm_sm_stds = torch.cat((self.norm_sm_stds, stds), dim=-4)
             else:
-                std = self.norm_sm_stds[..., cov_chunk, :, :]
+                std1 = self.norm_sm_stds[..., cov_chunk, :, :, 0]
+                std2 = self.norm_sm_stds[..., cov_chunk, :, :, 1]
             
             # Divide by the (approximate) std
-            data_st_p /= std
+            xphi1_k1 /= std1
+            xphi2_k2 /= std2
         else: # No normalization
             # Substract the mean
-            data_st_p -= torch.mean(data_st_p, (-1, -2), keepdim=True) # (..., ?, P, M, N)
-            
-        return data_st_p
+            xphi1_k1 -= torch.mean(xphi1_k1, (-1, -2), keepdim=True)
+            xphi2_k2 -= torch.mean(xphi2_k2, (-1, -2), keepdim=True)
+        return xphi1_k1, xphi2_k2
     
     def clear_normalization(self):
         """
@@ -886,8 +888,7 @@ class WPHOp(torch.nn.Module):
         """
         self.norm_wph_means = None
         self.norm_wph_stds = None
-        self.norm_sm_means_1 = None
-        self.norm_sm_means_2 = None
+        self.norm_sm_means = None
         self.norm_sm_stds = None
         
     def get_normalization(self):
@@ -899,9 +900,9 @@ class WPHOp(torch.nn.Module):
         None.
 
         """
-        return self.norm_wph_means, self.norm_wph_stds, self.norm_sm_means_1, self.norm_sm_means_2, self.norm_sm_stds
+        return self.norm_wph_means, self.norm_wph_stds, self.norm_sm_means, self.norm_sm_stds
     
-    def set_normalization(self, norm_wph_means, norm_wph_stds, norm_sm_means_1, norm_sm_means_2, norm_sm_stds):
+    def set_normalization(self, norm_wph_means, norm_wph_stds, norm_sm_means, norm_sm_stds):
         """
         Set normalization of the coefficients.
 
@@ -912,8 +913,7 @@ class WPHOp(torch.nn.Module):
         """
         self.norm_wph_means = norm_wph_means
         self.norm_wph_stds = norm_wph_stds
-        self.norm_sm_means_1 = norm_sm_means_1
-        self.norm_sm_means_2 = norm_sm_means_2
+        self.norm_sm_means = norm_sm_means
         self.norm_sm_stds = norm_sm_stds
 
     def _cutting(self, data):
@@ -1041,48 +1041,33 @@ class WPHOp(torch.nn.Module):
             cov_indices = self.scaling_moments_indices[cov_chunk]
             
             curr_phi_indices = self._phi_indices[cov_chunk]
-        
-            # Separate real and imaginary parts of input data if complex data
-            if torch.is_complex(data):
-                cplx = True
-                data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
-                                       dtype=data.dtype, device=data.device) # (...,2, M, N)
-                data_new[..., 0, :, :] = data.real
-                data_new[..., 1, :, :] = data.imag
-                data_new = data_new.unsqueeze(-3) # (..., 2, 1, M, N)
-            else:
-                cplx = False
-                data_new = data.clone().unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, M, N)
-                
-            # Subtract the mean to avoid a bias due to a non-zero mean of the signal
-            data_new = self._sm_normalization_1(data_new, norm)
-            
-            # Convolution with scaling functions
-            data_f = fft(data_new)
-            data_st_f = data_f * self.phi_f[curr_phi_indices]  # (..., ?, P, M, N)
-            del data_new, data_f
-            data_st = ifft(data_st_f)
-            if not pbc: data_st = self._cutting(data_st) # Cutting if no periodic bounday conditions
-            del data_st_f
-            
-            # Compute moments
-            data_st_p = power_harmonics(data_st, cov_indices[:, 1])
-            del data_st
-            
+
+            data_f = fft(data).unsqueeze(-3) # (..., 1, M, N)
+            xphi_f = data_f * self.phi_f[curr_phi_indices]
+            xphi = ifft(xphi_f)
+            del data_f, xphi_f
+            if not pbc: xphi = self._cutting(xphi) # Cutting if no periodic bounday conditions
+
+            # Kill the mean
+            xphi -= torch.mean(xphi, (-1, -2), keepdim=True)
+
+            xphi_k1 = phase_harmonics(xphi, cov_indices[:, 1]) # (..., P, M, N)
+            xphi_k2 = phase_harmonics(xphi, cov_indices[:, 2]) # (..., P, M, N)
+            del xphi
+
+            # Take the complex conjugate of xphi_k2 depending on the value of pseudo
+            indices_pseudo = torch.where(cov_indices[:, 3] == 1)[0]
+            xphi_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xphi_k2, -3, indices_pseudo))
+
             # Normalization
-            data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
+            xphi_k1, xphi_k2 = self._sm_normalization(xphi_k1, xphi_k2, norm, cov_chunk)
             
             # Compute covariance
-            data_st_p = torch.abs(data_st_p)
-            cov = torch.mean(data_st_p * data_st_p, (-1, -2))
-            cov = cov.view(cov.shape[:-2] + (cov.shape[-2]*cov.shape[-1],)) # (..., ?*P)
-            del data_st_p
+            cov = torch.mean(xphi_k1 * torch.conj(xphi_k2), (-1, -2))
+            del xphi_k1, xphi_k2
             
             # For scaling moments, shift cov_chunk by the number of WPH moments
-            # There are subtleties related to the doubling of coefficients when applying to complex data
-            cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
-            if cplx:
-                cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
+            cov_chunk_shifted = cov_chunk[0] + self.nb_wph_moments + cov_chunk
             return cov, cov_chunk_shifted
         else: # Invalid
             raise Exception("Invalid chunk_id!")
@@ -1188,51 +1173,39 @@ class WPHOp(torch.nn.Module):
             cov_indices = self.scaling_moments_indices[cov_chunk]
             
             curr_phi_indices = self._phi_indices[cov_chunk]
-            
-            # Simple combination of data1 and data2 if scaling moments are demanded
-            data = torch.sqrt(torch.absolute(data1 * data2))
-        
-            # Separate real and imaginary parts of input data if complex data
-            if torch.is_complex(data):
-                cplx = True
-                data_new = torch.zeros(data.shape[:-2] + (2,) + data.shape[-2:],
-                                       dtype=data.dtype, device=data.device) # (...,2, M, N)
-                data_new[..., 0, :, :] = data.real
-                data_new[..., 1, :, :] = data.imag
-                data_new = data_new.unsqueeze(-3) # (..., 2, 1, M, N)
-            else:
-                cplx = False
-                data_new = data.clone().unsqueeze(-3).unsqueeze(-3) # (..., 1, 1, M, N)
-                
-            # Subtract the mean to avoid a bias due to a non-zero mean of the signal
-            data_new = self._sm_normalization_1(data_new, norm)
-            
-            # Convolution with scaling functions
-            data_f = fft(data_new)
-            data_st_f = data_f * self.phi_f[curr_phi_indices]  # (..., ?, P, M, N)
-            del data_new, data_f
-            data_st = ifft(data_st_f)
-            if not pbc: data_st = self._cutting(data_st) # Cutting if no periodic bounday conditions
-            del data_st_f
-            
-            # Compute moments
-            data_st_p = power_harmonics(data_st, cov_indices[:, 1])
-            del data_st
-            
+
+            data1_f = fft(data1).unsqueeze(-3) # (..., 1, M, N)
+            data2_f = fft(data2).unsqueeze(-3) # (..., 1, M, N)
+            xphi1_f = data1_f * self.phi_f[curr_phi_indices]
+            xphi2_f = data2_f * self.phi_f[curr_phi_indices]
+            xphi1 = ifft(xphi1_f)
+            xphi2 = ifft(xphi2_f)
+            del data1_f, xphi1_f, data2_f, xphi2_f
+            if not pbc: # Cutting if no periodic bounday conditions
+                xphi1 = self._cutting(xphi1)
+                xphi2 = self._cutting(xphi2)
+
+            # Kill the mean
+            xphi1 -= torch.mean(xphi1, (-1, -2), keepdim=True)
+            xphi2 -= torch.mean(xphi2, (-1, -2), keepdim=True)
+
+            xphi_k1 = phase_harmonics(xphi1, cov_indices[:, 1]) # (..., P, M, N)
+            xphi_k2 = phase_harmonics(xphi2, cov_indices[:, 2]) # (..., P, M, N)
+            del xphi1, xphi2
+
+            # Take the complex conjugate of xphi_k2 depending on the value of pseudo
+            indices_pseudo = torch.where(cov_indices[:, 3] == 1)[0]
+            xphi_k2[..., indices_pseudo, :, :] = torch.conj(torch.index_select(xphi_k2, -3, indices_pseudo))
+
             # Normalization
-            data_st_p = self._sm_normalization_2(data_st_p, norm, cov_chunk)
+            xphi_k1, xphi_k2 = self._sm_normalization(xphi_k1, xphi_k2, norm, cov_chunk)
             
             # Compute covariance
-            data_st_p = torch.abs(data_st_p)
-            cov = torch.mean(data_st_p * data_st_p, (-1, -2))
-            cov = cov.view(cov.shape[:-2] + (cov.shape[-2]*cov.shape[-1],)) # (..., ?*P)
-            del data_st_p
+            cov = torch.mean(xphi_k1 * torch.conj(xphi_k2), (-1, -2))
+            del xphi_k1, xphi_k2
             
             # For scaling moments, shift cov_chunk by the number of WPH moments
-            # There are subtleties related to the doubling of coefficients when applying to complex data
-            cov_chunk_shifted = cov_chunk[0]*(1 + cplx) + self.nb_wph_moments + cov_chunk
-            if cplx:
-                cov_chunk_shifted = torch.cat([cov_chunk_shifted, cov_chunk_shifted + len(cov_chunk)])
+            cov_chunk_shifted = cov_chunk[0] + self.nb_wph_moments + cov_chunk
             return cov, cov_chunk_shifted
         else: # Invalid
             raise Exception("Invalid chunk_id!")

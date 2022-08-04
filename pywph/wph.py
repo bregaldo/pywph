@@ -69,7 +69,7 @@ class WPH:
         """
         Lexicographical reordering of the coefficients:
         - for WPH moments on [j1, t1, p1, j2, t2, p2, n, a, pseudo]
-        - for scaling moments on [j, p1, p2]
+        - for scaling moments on [j, p1, p2, pseudo]
         Returns
         -------
         None.
@@ -109,6 +109,8 @@ class WPH:
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 1] == p1)
             if p2 is not None:
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 2] == p2)
+            if pseudo is not None:
+                filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 3] == int(pseudo))
         else:
             filtering = np.ones(self.wph_coeffs_indices.shape[0], np.bool)
             if j1 is not None:
