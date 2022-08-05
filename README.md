@@ -1,12 +1,10 @@
 # PyWPH : Wavelet Phase Harmonics in Python
 
 PyWPH is a Python package designed for the computation and handling of the Wavelet Phase Harmonic (WPH) statistics.
-These statistics can be computed from real or complex images (2D data). Calculations are GPU accelerated using PyTorch/CUDA (torch>=1.9.0).
+These statistics can be computed from real or complex-valued images (2D data). Calculations are GPU-accelerated using PyTorch/CUDA (torch>=1.9.0). See the [PyTorch installation guide](https://pytorch.org/get-started/locally/) if needed.
 
-Install PyWPH and check out the examples/ folder. You will find elementary examples to compute WPH coefficients from an image,
-as well as more convoluted synthesis or denoising scripts.
-
-This code is a rework and extension of [https://github.com/Ttantto/wph_quijote](https://github.com/Ttantto/wph_quijote).
+Install PyWPH and check out the examples/ folder. You will find basic examples to compute WPH coefficients from an image,
+as well as more complex synthesis or statistical denoising scripts.
 
 If you use this package, please cite the following paper:
 * Regaldo-Saint Blancard, B., Allys, E., Boulanger, F., Levrier, F., & Jeffrey, N. (2021). A new approach for the statistical denoising of Planck interstellar dust polarization data. [arXiv:2102.03160](https://arxiv.org/abs/2102.03160)
@@ -16,6 +14,7 @@ Related references:
 * Allys, E., Marchand, T., Cardoso, J.-F., Villaescusa-Navarro, F., Ho, S., & Mallat, S. (2020). New Interpretable Statistics for Large Scale Structure Analysis and Generation. Physical Review D, 102(10), 103506. [arXiv:2006.06298](http://arxiv.org/abs/2006.06298)
 * Zhang, S., & Mallat, S. (2021). Maximum Entropy Models from Phase Harmonic Covariances. Applied and Computational Harmonic Analysis, 53, 199–230. https://doi.org/10.1016/j.acha.2021.01.003 [arXiv:1911.10017](https://arxiv.org/abs/1911.10017)
 
+This code originally takes inspiration from [https://github.com/Ttantto/wph_quijote](https://github.com/Ttantto/wph_quijote).
 ## Install/Uninstall
 
 ### Standard installation (from the Python Package Index)
@@ -40,3 +39,16 @@ pip uninstall pywph
 ```
 
 ## Changelog
+
+# v1.1
+
+* New default discretization grid for the shift vector $\tau$
+* New set of scaling moments $L$ (which replaced the old ones)
+# v1.0
+
+* Cross-WPH statistics added
+* Smarter way to evaluate moments at different $\tau$
+* Improved computation for non periodic boundary conditions data
+# v0.9
+
+First release. Version of the code used for [arXiv:2102.03160](https://arxiv.org/abs/2102.03160).
