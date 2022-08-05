@@ -40,15 +40,15 @@ pip uninstall pywph
 
 ## Changelog
 
-# v1.1
+### v1.1
 
 * New default discretization grid for the shift vector $\tau$
 * New set of scaling moments $L$ (which replaced the old ones)
-# v1.0
+### v1.0
 
 * Cross-WPH statistics added
 * Smarter way to evaluate moments at different $\tau$
 * Improved computation for non periodic boundary conditions data
-# v0.9
+### v0.9
 
 First release. Version of the code used for [arXiv:2102.03160](https://arxiv.org/abs/2102.03160).
