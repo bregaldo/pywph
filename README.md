@@ -4,7 +4,7 @@ PyWPH is a Python package designed for the computation and handling of the Wavel
 These statistics can be computed from real or complex-valued images (2D data). Calculations are GPU-accelerated using PyTorch/CUDA (torch>=1.9.0). See the [PyTorch installation guide](https://pytorch.org/get-started/locally/) if needed.
 
 Install PyWPH and check out the examples/ folder. You will find basic examples to compute WPH coefficients from an image,
-as well as more complex scripts for synthesis or statistical denoising. Examples of multi-channel synthesis are provided [here](https://github.com/bregaldo/dust_genmodels).
+as well as more complex scripts for synthesis or statistical denoising. Examples of multi-channel syntheses are provided [here](https://github.com/bregaldo/dust_genmodels).
 
 We refer to [arXiv:2208.03538](https://arxiv.org/abs/2208.03538) for a presentation of the WPH statistics computed in this package.
 
