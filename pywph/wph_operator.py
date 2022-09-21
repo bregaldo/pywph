@@ -823,10 +823,37 @@ class WPHOp(torch.nn.Module):
             # Divide by the (approximate) std
             xpsi1_k1 /= std1
             xpsi2_k2 /= std2
-        else: # No normalization
+        elif norm == "auto_std_only": # Automatic normalization without keeping the mean in memory
+             # Substract the mean
+            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+            
+            # Compute or retrieve (approximate) stds
+            if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_cov:  # If self.norm_wph_stds is not complete
+                std1 = torch.sqrt(torch.mean(torch.abs(xpsi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(xpsi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                
+                std1[std1 == 0] = 1.0 # To avoid division by zero
+                std2[std2 == 0] = 1.0 # To avoid division by zero
+                
+                stds = torch.stack((std1, std2), dim=-1)
+                if self.norm_wph_stds is None:
+                    self.norm_wph_stds = stds
+                else:
+                    self.norm_wph_stds = torch.cat((self.norm_wph_stds, stds), dim=-4)
+            else:
+                std1 = self.norm_wph_stds[..., cov_chunk, :, :, 0]
+                std2 = self.norm_wph_stds[..., cov_chunk, :, :, 1]
+            
+            # Divide by the (approximate) std
+            xpsi1_k1 /= std1
+            xpsi2_k2 /= std2
+        elif norm is None: # No normalization
             # Substract the mean
             xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
             xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+        else:
+            raise Exception(f"Unknown normalization mode: {norm}!")
         return xpsi1_k1, xpsi2_k2
 
     def _sm_normalization(self, xphi1_k1, xphi2_k2, norm, cov_chunk):
@@ -871,10 +898,37 @@ class WPHOp(torch.nn.Module):
             # Divide by the (approximate) std
             xphi1_k1 /= std1
             xphi2_k2 /= std2
-        else: # No normalization
+        elif norm == "auto_std_only": # Automatic normalization without keeping the mean in memory
             # Substract the mean
             xphi1_k1 -= torch.mean(xphi1_k1, (-1, -2), keepdim=True)
             xphi2_k2 -= torch.mean(xphi2_k2, (-1, -2), keepdim=True)
+            
+            # Compute or retrieve (approximate) stds
+            if self.norm_sm_stds is None or self.norm_sm_stds.shape[-4] != self.nb_scaling_moments:  # If self.norm_sm_stds is not complete
+                std1 = torch.sqrt(torch.mean(torch.abs(xphi1_k1.detach()) ** 2, (-1, -2), keepdim=True))
+                std2 = torch.sqrt(torch.mean(torch.abs(xphi2_k2.detach()) ** 2, (-1, -2), keepdim=True))
+                
+                std1[std1 == 0] = 1.0 # To avoid division by zero
+                std2[std2 == 0] = 1.0 # To avoid division by zero
+                
+                stds = torch.stack((std1, std2), dim=-1)
+                if self.norm_sm_stds is None:
+                    self.norm_sm_stds = stds
+                else:
+                    self.norm_sm_stds = torch.cat((self.norm_sm_stds, stds), dim=-4)
+            else:
+                std1 = self.norm_sm_stds[..., cov_chunk, :, :, 0]
+                std2 = self.norm_sm_stds[..., cov_chunk, :, :, 1]
+            
+            # Divide by the (approximate) std
+            xphi1_k1 /= std1
+            xphi2_k2 /= std2
+        elif norm is None: # No normalization
+            # Substract the mean
+            xphi1_k1 -= torch.mean(xphi1_k1, (-1, -2), keepdim=True)
+            xphi2_k2 -= torch.mean(xphi2_k2, (-1, -2), keepdim=True)
+        else:
+            raise Exception(f"Unknown normalization mode: {norm}!")
         return xphi1_k1, xphi2_k2
     
     def clear_normalization(self):
@@ -915,6 +969,69 @@ class WPHOp(torch.nn.Module):
         self.norm_wph_stds = norm_wph_stds
         self.norm_sm_means = norm_sm_means
         self.norm_sm_stds = norm_sm_stds
+    
+    def set_custom_scale_dependent_normalization(self, norm_wph=None, norm_sm=None, cross=False):
+        """
+        Set custom scale dependent normalization of the coefficients.
+
+        Parameters
+        ----------
+        norm_wph : array or list of arrays
+            Array of normalization coefficients that will divide the final vector of WPH statistics.
+            One normalization coefficient per j value is expected. The default is None.
+        norm_sm : array or list of arrays
+            Array of normalization coefficients that will divide the final vector of scaling statistics.
+            One normalization coefficient per j value is expected. The default is None.
+        cross : bool
+            Normalization for cross coefficients? In which case, norm_wph and norm_sm should be lists of length 2 corresponding to
+            distinct normalization coefficients for left and right terms of covariances. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
+        if norm_wph is not None:
+            if cross:
+                assert len(norm_wph) == 2
+                norm_wph_1 = norm_wph[0]
+                norm_wph_2 = norm_wph[1]
+            else:
+                norm_wph_1 = norm_wph_2 = norm_wph
+
+            if len(norm_wph_1) != self.J - self.j_min and len(norm_wph_2) != self.J - self.j_min:
+                raise Exception("Length of (elements of) norm_wph must correspond to J - j_min!")
+
+            psi_1_weights = torch.zeros_like(self._psi_1_indices).to(torch.float32)
+            psi_2_weights = torch.zeros_like(self._psi_2_indices).to(torch.float32)
+            for i in range(psi_1_weights.shape[0]):
+                elt = list(self.wph_moments_indices[i].cpu().numpy()) # [j1, theta1, p1, j2, theta2, p2, n, alpha, pseudo]
+                psi_1_weights[i] = norm_wph_1[elt[0] - self.j_min]
+                psi_2_weights[i] = norm_wph_2[elt[3] - self.j_min]
+            norm_wph_stds = torch.stack([psi_1_weights, psi_2_weights], axis=1).unsqueeze(-2).unsqueeze(-2)
+            self.norm_wph_stds = norm_wph_stds
+        
+        if norm_sm is not None:
+            if cross:
+                assert len(norm_sm) == 2
+                norm_sm_1 = norm_sm[0]
+                norm_sm_2 = norm_sm[1]
+            else:
+                norm_sm_1 = norm_sm_2 = norm_sm
+
+            sm_j_list_unique = list(np.unique(self._phi_indices.cpu().numpy()))
+
+            if len(norm_sm_1) != len(sm_j_list_unique) and len(norm_sm_2) != len(sm_j_list_unique):
+                raise Exception(f"Length of (elements of) norm_sm must be {len(sm_j_list_unique)}!")
+
+            # Scaling moments preparation
+            phi_1_weights = torch.zeros_like(self._phi_indices).to(torch.float32)
+            phi_2_weights = torch.zeros_like(self._phi_indices).to(torch.float32)
+            for i in range(phi_1_weights.shape[0]):
+                phi_1_weights[i] = norm_sm_1[self._phi_indices[i]]
+                phi_2_weights[i] = norm_sm_2[self._phi_indices[i]]
+            norm_sm_stds = torch.stack([phi_1_weights, phi_2_weights], axis=1).unsqueeze(-2).unsqueeze(-2)
+            self.norm_sm_stds = norm_sm_stds
 
     def _cutting(self, data):
         """
