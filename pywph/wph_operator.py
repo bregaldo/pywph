@@ -1327,7 +1327,7 @@ class WPHOp(torch.nn.Module):
         else: # Invalid
             raise Exception("Invalid chunk_id!")
         
-    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False):
+    def apply(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False, auto_free_mem=True):
         """
         Compute the WPH statistics of input data.
         There are two modes of use:
@@ -1356,6 +1356,8 @@ class WPHOp(torch.nn.Module):
             Estimate cross moments?
             If True, data must be a list of two elements corresponding to the two involved maps.
             The default is False.
+        auto_free_mem : bool, optional
+            Call self._free method when computation is over. The default is True.
 
         Returns
         -------
@@ -1404,13 +1406,13 @@ class WPHOp(torch.nn.Module):
             ret = coeffs
 
         # We free memory when needed
-        if chunk_id is None or chunk_id == self.nb_chunks - 1:
+        if (chunk_id is None or chunk_id == self.nb_chunks - 1) and auto_free_mem:
             self._free()
 
         return ret
     
-    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False):
+    def forward(self, data, chunk_id=None, requires_grad=False, norm=None, ret_indices=False, pbc=True, ret_wph_obj=False, cross=False, auto_free_mem=True):
         """
         Alias of apply.
         """
-        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, pbc=pbc, ret_wph_obj=ret_wph_obj, cross=cross)
+        return self.apply(data, chunk_id=chunk_id, requires_grad=requires_grad, norm=norm, ret_indices=ret_indices, pbc=pbc, ret_wph_obj=ret_wph_obj, cross=cross, auto_free_mem=auto_free_mem)
