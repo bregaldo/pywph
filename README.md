@@ -3,8 +3,7 @@
 PyWPH is a Python package designed for the computation and handling of the Wavelet Phase Harmonic (WPH) statistics.
 These statistics can be computed from real or complex-valued images (2D data). Calculations are GPU-accelerated using PyTorch/CUDA (torch>=1.9.0). See the [PyTorch installation guide](https://pytorch.org/get-started/locally/) if needed.
 
-Install PyWPH and check out the examples/ folder. You will find basic examples to compute WPH coefficients from an image,
-as well as more complex scripts for synthesis or statistical denoising. Examples of multi-channel syntheses are provided [here](https://github.com/bregaldo/dust_genmodels).
+Install PyWPH and check out our [tutorial](examples/tutorial.ipynb) as well as the examples scripts located in the [examples/](examples/) folder. Example scripts include basic examples to compute WPH coefficients from an image, as well as more complex scripts for synthesis or statistical denoising. Examples of multi-channel syntheses are provided [here](https://github.com/bregaldo/dust_genmodels).
 
 We refer to [arXiv:2208.03538](https://arxiv.org/abs/2208.03538) for a presentation of the WPH statistics computed in this package.
 
@@ -18,6 +17,7 @@ Related references:
 * Régaldo-Saint Blancard, B., Allys, E., Auclair, C., Boulanger, F., Eickenberg, M., Levrier, F., Vacher, L. & Zhang, S. (2022). Generative Models of Multi-channel Data from a Single Example - Application to Dust Emission. [arXiv:2208.03538](https://arxiv.org/abs/2208.03538). [Code](https://github.com/bregaldo/dust_genmodels).
 
 This code originally takes inspiration from [https://github.com/Ttantto/wph_quijote](https://github.com/Ttantto/wph_quijote).
+
 ## Install/Uninstall
 
 ### Standard installation (from the Python Package Index)
