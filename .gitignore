@@ -6,4 +6,5 @@ tests/wph_quijote/bump_steerable_wavelet/filters/
 Notes
 tests/tmp.py
 tests/tests.py
+build/
 *-jvsc-*.ipynb
