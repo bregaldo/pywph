@@ -6,4 +6,6 @@ tests/wph_quijote/bump_steerable_wavelet/filters/
 Notes
 tests/tmp.py
 tests/tests.py
+pywph.egg-info/
+build/
 *-jvsc-*.ipynb

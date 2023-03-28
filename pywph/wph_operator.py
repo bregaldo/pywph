@@ -800,8 +800,8 @@ class WPHOp(torch.nn.Module):
                 mean2 = self.norm_wph_means[..., cov_chunk, :, :, 1] # (..., P, 1, 1)
             
             # Substract the means
-            xpsi1_k1 -= mean1.to(xpsi1_k1.dtype) # Consistent dtype needed
-            xpsi2_k2 -= mean2.to(xpsi2_k2.dtype) # Consistent dtype needed
+            xpsi1_k1 = xpsi1_k1 - mean1.to(xpsi1_k1.dtype) # Consistent dtype needed
+            xpsi2_k2 = xpsi2_k2 - mean2.to(xpsi2_k2.dtype) # Consistent dtype needed
             
             # Compute or retrieve (approximate) stds
             if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_cov:  # If self.norm_wph_stds is not complete
@@ -821,12 +821,12 @@ class WPHOp(torch.nn.Module):
                 std2 = self.norm_wph_stds[..., cov_chunk, :, :, 1]
             
             # Divide by the (approximate) std
-            xpsi1_k1 /= std1
-            xpsi2_k2 /= std2
+            xpsi1_k1 = xpsi1_k1 / std1
+            xpsi2_k2 = xpsi2_k2 / std2
         elif norm == "auto_std_only": # Automatic normalization without keeping the mean in memory
              # Substract the mean
-            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
-            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+            xpsi1_k1 = xpsi1_k1 - torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 = xpsi2_k2 - torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
             
             # Compute or retrieve (approximate) stds
             if self.norm_wph_stds is None or self.norm_wph_stds.shape[-4] != self.nb_wph_cov:  # If self.norm_wph_stds is not complete
@@ -846,12 +846,12 @@ class WPHOp(torch.nn.Module):
                 std2 = self.norm_wph_stds[..., cov_chunk, :, :, 1]
             
             # Divide by the (approximate) std
-            xpsi1_k1 /= std1
-            xpsi2_k2 /= std2
+            xpsi1_k1 = xpsi1_k1 / std1
+            xpsi2_k2 = xpsi2_k2 / std2
         elif norm is None: # No normalization
             # Substract the mean
-            xpsi1_k1 -= torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
-            xpsi2_k2 -= torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
+            xpsi1_k1 = xpsi1_k1 - torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi2_k2 = xpsi2_k2 - torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
         else:
             raise Exception(f"Unknown normalization mode: {norm}!")
         return xpsi1_k1, xpsi2_k2
@@ -875,8 +875,8 @@ class WPHOp(torch.nn.Module):
                 mean2 = self.norm_sm_means[..., cov_chunk, :, :, 1] # (..., P, 1, 1)
             
             # Substract the means
-            xphi1_k1 -= mean1.to(xphi1_k1.dtype) # Consistent dtype needed
-            xphi2_k2 -= mean2.to(xphi2_k2.dtype) # Consistent dtype needed
+            xphi1_k1 = xphi1_k1 - mean1.to(xphi1_k1.dtype) # Consistent dtype needed
+            xphi2_k2 = xphi2_k2 - mean2.to(xphi2_k2.dtype) # Consistent dtype needed
             
             # Compute or retrieve (approximate) stds
             if self.norm_sm_stds is None or self.norm_sm_stds.shape[-4] != self.nb_scaling_moments:  # If self.norm_sm_stds is not complete
@@ -896,12 +896,12 @@ class WPHOp(torch.nn.Module):
                 std2 = self.norm_sm_stds[..., cov_chunk, :, :, 1]
             
             # Divide by the (approximate) std
-            xphi1_k1 /= std1
-            xphi2_k2 /= std2
+            xphi1_k1 = xphi1_k1 / std1
+            xphi2_k2 = xphi2_k2 / std2
         elif norm == "auto_std_only": # Automatic normalization without keeping the mean in memory
             # Substract the mean
-            xphi1_k1 -= torch.mean(xphi1_k1, (-1, -2), keepdim=True)
-            xphi2_k2 -= torch.mean(xphi2_k2, (-1, -2), keepdim=True)
+            xphi1_k1 = xphi1_k1 - torch.mean(xphi1_k1, (-1, -2), keepdim=True)
+            xphi2_k2 = xphi2_k2 - torch.mean(xphi2_k2, (-1, -2), keepdim=True)
             
             # Compute or retrieve (approximate) stds
             if self.norm_sm_stds is None or self.norm_sm_stds.shape[-4] != self.nb_scaling_moments:  # If self.norm_sm_stds is not complete
@@ -921,12 +921,12 @@ class WPHOp(torch.nn.Module):
                 std2 = self.norm_sm_stds[..., cov_chunk, :, :, 1]
             
             # Divide by the (approximate) std
-            xphi1_k1 /= std1
-            xphi2_k2 /= std2
+            xphi1_k1 = xphi1_k1 / std1
+            xphi2_k2 = xphi2_k2 / std2
         elif norm is None: # No normalization
             # Substract the mean
-            xphi1_k1 -= torch.mean(xphi1_k1, (-1, -2), keepdim=True)
-            xphi2_k2 -= torch.mean(xphi2_k2, (-1, -2), keepdim=True)
+            xphi1_k1 = xphi1_k1 - torch.mean(xphi1_k1, (-1, -2), keepdim=True)
+            xphi2_k2 = xphi2_k2 - torch.mean(xphi2_k2, (-1, -2), keepdim=True)
         else:
             raise Exception(f"Unknown normalization mode: {norm}!")
         return xphi1_k1, xphi2_k2
@@ -1166,7 +1166,7 @@ class WPHOp(torch.nn.Module):
             if not pbc: xphi = self._cutting(xphi) # Cutting if no periodic bounday conditions
 
             # Kill the mean
-            xphi -= torch.mean(xphi, (-1, -2), keepdim=True)
+            xphi = xphi - torch.mean(xphi, (-1, -2), keepdim=True)
 
             xphi_k1 = phase_harmonics(xphi, cov_indices[:, 1]) # (..., P, M, N)
             xphi_k2 = phase_harmonics(xphi, cov_indices[:, 2]) # (..., P, M, N)
@@ -1303,8 +1303,8 @@ class WPHOp(torch.nn.Module):
                 xphi2 = self._cutting(xphi2)
 
             # Kill the mean
-            xphi1 -= torch.mean(xphi1, (-1, -2), keepdim=True)
-            xphi2 -= torch.mean(xphi2, (-1, -2), keepdim=True)
+            xphi1 = xphi1 - torch.mean(xphi1, (-1, -2), keepdim=True)
+            xphi2 = xphi2 - torch.mean(xphi2, (-1, -2), keepdim=True)
 
             xphi_k1 = phase_harmonics(xphi1, cov_indices[:, 1]) # (..., P, M, N)
             xphi_k2 = phase_harmonics(xphi2, cov_indices[:, 2]) # (..., P, M, N)
