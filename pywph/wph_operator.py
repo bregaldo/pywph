@@ -825,7 +825,7 @@ class WPHOp(torch.nn.Module):
             xpsi2_k2 = xpsi2_k2 / std2
         elif norm == "auto_std_only": # Automatic normalization without keeping the mean in memory
              # Substract the mean
-            xpsi1_k1 = xpsi2_k2 - torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
+            xpsi1_k1 = xpsi1_k1 - torch.mean(xpsi1_k1, (-1, -2), keepdim=True)
             xpsi2_k2 = xpsi2_k2 - torch.mean(xpsi2_k2, (-1, -2), keepdim=True)
             
             # Compute or retrieve (approximate) stds
