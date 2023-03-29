@@ -98,7 +98,7 @@ class WPH:
         Internal function for coefficients selection.
         """
         if sm or clas == "L":
-            filtering = np.ones(self.sm_coeffs_indices.shape[0], np.bool)
+            filtering = np.ones(self.sm_coeffs_indices.shape[0], bool)
             if j is not None:
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 0] == j)
             if j1 is not None: # j and j1 are aliases in this case
@@ -112,7 +112,7 @@ class WPH:
             if pseudo is not None:
                 filtering = np.logical_and(filtering, self.sm_coeffs_indices[:, 3] == int(pseudo))
         else:
-            filtering = np.ones(self.wph_coeffs_indices.shape[0], np.bool)
+            filtering = np.ones(self.wph_coeffs_indices.shape[0], bool)
             if j1 is not None:
                 filtering = np.logical_and(filtering, self.wph_coeffs_indices[:, 0] == j1)
             if t1 is not None:
