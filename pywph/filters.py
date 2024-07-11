@@ -147,7 +147,7 @@ class BumpSteerableWavelet (Filter):
     
     def build(self):
         # Normalization
-        c = 2 ** (self.L - 1) / 1.29 * np.math.factorial(self.L - 1) / np.sqrt(self.L * np.math.factorial(2 * (self.L - 1)))
+        c = 2 ** (self.L - 1) / 1.29 * math.factorial(self.L - 1) / np.sqrt(self.L * math.factorial(2 * (self.L - 1)))
         
         # Modulus of the central wavenumber
         xi = self.k0 / self.sigma
