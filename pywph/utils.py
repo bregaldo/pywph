@@ -157,7 +157,7 @@ def get_memory_available(device):
     None.
 
     """
-    if device == "cpu":
+    if device == "cpu" or device == "mps":
         return psutil.virtual_memory().available
     else:
         if isinstance(device, torch.device):

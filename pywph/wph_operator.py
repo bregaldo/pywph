@@ -587,7 +587,7 @@ class WPHOp(torch.nn.Module):
         for i in range(self.scaling_moments_indices.shape[0]):
             elt = self.scaling_moments_indices[i] # [j, p1, p2, pseudo]
             self._phi_indices.append(sm_j_list_unique.index(elt[0]))
-        self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device)
+        self.scaling_moments_indices = torch.from_numpy(self.scaling_moments_indices).to(self.device, torch.long)
         self._phi_indices = torch.from_numpy(np.array(self._phi_indices)).to(self.device, torch.long)
         
         # Useful variables
