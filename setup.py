@@ -10,7 +10,7 @@ with open("requirements.txt", "r") as f:
 
 setuptools.setup(
     name="pywph",
-    version="1.1.2",
+    version="1.1.3",
     author="Bruno Régaldo-Saint Blancard",
     author_email="bregaldosaintblancard@flatironinstitute.org",
     description="Wavelet Phase Harmonics in Python with GPU acceleration.",
